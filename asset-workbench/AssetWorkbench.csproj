@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>CardAssetExtractor</AssemblyName>
+    <StartupObject>CardAssetWorkbench.Program</StartupObject>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(CleanRelease)' == 'true'"><OutputType>Library</OutputType><StartupObject></StartupObject></PropertyGroup>
+  <ItemGroup Condition="'$(CleanRelease)' == 'true'"><Compile Remove="Program.cs;BulkSelfTest.cs" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AssetsTools.NET" Version="3.0.4"/>
+    <PackageReference Include="AssetsTools.NET.Texture" Version="3.0.2"/>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12"/>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11"/>
+    <Compile Include="../master-duel-modding/src/Floowan.Core/Data/CardDataCrypto.cs" Link="CardDataCrypto.cs"/>
+    <Compile Include="../master-duel-modding/src/Floowan.Core/Data/CardDataFilesParser.cs" Link="CardDataFilesParser.cs"/>
+    <None Include="../master-duel-modding/src/Floowan.Core/Resources/classdata.tpk" Link="classdata.tpk" CopyToOutputDirectory="PreserveNewest"/>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+BCnEncoder.Net 2.3.0, MIT option selected.
+https://github.com/Nominom/BCnEncoder.NET
+NuGet repository commit: 74eda8a330759d81e6307f19aefc547e40687825
+Obtained from https://api.nuget.org/v3/index.json .
+Dependency: CommunityToolkit.HighPerformance 8.4.0 (MIT).
+Both run locally, no remote image processing.

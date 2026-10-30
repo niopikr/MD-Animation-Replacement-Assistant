@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>MD动画替换助手</AssemblyName>
+    <Version>1.4.0</Version>
+    <OutputType>WinExe</OutputType>
+    <UseAppHost>true</UseAppHost>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
+    <Compile Remove="ViewerApi.cs;*SelfTest.cs" />
+    <Content Include="ThirdParty/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="../master-duel-modding/src/Floowan.Core/Floowan.Core.csproj" />
+    <ProjectReference Include="../asset-workbench/AssetWorkbench.csproj" AdditionalProperties="CleanRelease=true" />
+    <Content Include="web/index.html;web/app.js;web/preview.js;web/style.css;web/rigby/**/*.js;web/rigby/LICENSE-MIT;web/rigby/package.json;web/rigby/UPSTREAM.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

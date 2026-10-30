@@ -1,0 +1,1 @@
+﻿资源/native 内的微软 Visual C++ 运行组件保留原数字签名和版权信息，用于加载本地 ONNX Runtime。ONNX Runtime 的许可与第三方依赖说明见本目录的上游依赖说明。
