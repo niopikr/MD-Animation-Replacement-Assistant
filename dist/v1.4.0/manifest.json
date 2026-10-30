@@ -1,0 +1,388 @@
+{
+  "version": "1.4.0",
+  "sourceCommit": "54d4db27cebcee2c3b3ce0a8cb985cc7adf7d6a9",
+  "archive": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip",
+  "folder": "MD动画替换助手-v1.4.0-win-x64",
+  "files": [
+    {
+      "path": "MD动画替换助手.exe",
+      "size": 54068220,
+      "sha256": "ef6b34aac8259005b63e01bed694f62608edbad4ac17a77f40063b2031fab882"
+    },
+    {
+      "path": "portable.json",
+      "size": 91,
+      "sha256": "17859ce9c4491acafde4e1bf55d233fe2670779579441c093a6c37129a2ba4be"
+    },
+    {
+      "path": "使用说明.md",
+      "size": 3050,
+      "sha256": "5de8d151de1bfbeaab5a7fb4c4bd2777def3f74d961634ea2bc740bcde14b431"
+    },
+    {
+      "path": "数据/默认目录.zip",
+      "size": 5036976,
+      "sha256": "e727b4b92eb82e369934eb3b86c6b5a701721c0f3a7810371577e2e3d3f65a01"
+    },
+    {
+      "path": "许可/BCnEncoder/LICENSE-MIT.txt",
+      "size": 1050,
+      "sha256": "eaebf371c0f56d4dc3dab48f0e625e488d6f9d6088bffa21803491f22d223c40"
+    },
+    {
+      "path": "许可/BCnEncoder/UPSTREAM.txt",
+      "size": 307,
+      "sha256": "c8ad1336cd5025de36d6d23f16f5d595ffe412239a416baad2df81182376d6b6"
+    },
+    {
+      "path": "许可/CommunityToolkit/License.md",
+      "size": 1158,
+      "sha256": "651997ef19dbb9ecb8dd660dbc86444a65af21f18cfe08daa69bf201cd5cfdfc"
+    },
+    {
+      "path": "许可/CommunityToolkit/ThirdPartyNotices.txt",
+      "size": 8600,
+      "sha256": "7774f8b0ab66bfb47ec154ce24a2d6d574febc44a74d940b8a037d1c56756163"
+    },
+    {
+      "path": "许可/LICENSE-upstream.txt",
+      "size": 1186,
+      "sha256": "abc29889a3fcc40e902f7e663a641ed6419928a2b683b850a822245f740637f8"
+    },
+    {
+      "path": "许可/SAM2.1/LICENSE.txt",
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "许可/上游依赖说明.txt",
+      "size": 5145,
+      "sha256": "bfb4c3313d75cb2cf6136e0a6049be0283ae02c6b88ed7bcf086580c30681f9a"
+    },
+    {
+      "path": "许可/微软运行组件说明.txt",
+      "size": 210,
+      "sha256": "506c0f1f840bd092b7961863b2e090acd835d3aee4eb25ed9039c343f4d142e0"
+    },
+    {
+      "path": "资源/classdata.tpk",
+      "size": 289605,
+      "sha256": "129e1f80f930415db6779fe6089afa75280cb51462bcee812beab6cd81a764c6"
+    },
+    {
+      "path": "资源/models/sam2/sam2.1_hiera_tiny.decoder.onnx",
+      "size": 20655795,
+      "sha256": "0ae944e08e55814c19afa4d143ef07b1a3dbad2decd77c15ec3ab220b9f57247"
+    },
+    {
+      "path": "资源/models/sam2/sam2.1_hiera_tiny.encoder.onnx",
+      "size": 109473919,
+      "sha256": "4fda6e68561e27808cedffa8689749a622bba5f11ba66f4ca4e3a8a9f6360db5"
+    },
+    {
+      "path": "资源/native/msvcp140.dll",
+      "size": 643512,
+      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"
+    },
+    {
+      "path": "资源/native/msvcp140_1.dll",
+      "size": 35768,
+      "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982"
+    },
+    {
+      "path": "资源/native/vcruntime140.dll",
+      "size": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    {
+      "path": "资源/native/vcruntime140_1.dll",
+      "size": 50112,
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+    },
+    {
+      "path": "资源/web/app.js",
+      "size": 37157,
+      "sha256": "6412bf72878c74ce5a398ad826367c587dd3e7968613c5ead88a4f138c8857ec"
+    },
+    {
+      "path": "资源/web/index.html",
+      "size": 12661,
+      "sha256": "93b443f294f513ef8214c59c383f156c1b1180f5a56759bb53544c26856d51b3"
+    },
+    {
+      "path": "资源/web/preview.js",
+      "size": 12148,
+      "sha256": "38df6f9e1aa62cf98a1ebe6bcfde31248bfa53b648bc06881f253c2aed0c511a"
+    },
+    {
+      "path": "资源/web/rigby/LICENSE-MIT",
+      "size": 1073,
+      "sha256": "2c3f5813600926e1aa318a3b90f7efdbbcd6f45f9092647c86c1f367ab034bc6"
+    },
+    {
+      "path": "资源/web/rigby/UPSTREAM.md",
+      "size": 716,
+      "sha256": "112b9c21bdb9cf5c3d230d24b98e14ce553abb83ccd719814b173b8d701e1b69"
+    },
+    {
+      "path": "资源/web/rigby/package.json",
+      "size": 107,
+      "sha256": "8260e0fc42c16924664560d9e3df81ae3ee656ba7612ecee11c11614143a8631"
+    },
+    {
+      "path": "资源/web/rigby/src/core/animation.js",
+      "size": 6632,
+      "sha256": "5833a82edbcbdcabdc894d700b9cf705ca1ec3219c0e12ddb00ce6a1361d2e9c"
+    },
+    {
+      "path": "资源/web/rigby/src/core/atlas.js",
+      "size": 6496,
+      "sha256": "1d352a9cd6a4f3f87c56bc790040b64d9070da654450f6b3a98d88305a4f256c"
+    },
+    {
+      "path": "资源/web/rigby/src/core/autorig.js",
+      "size": 24519,
+      "sha256": "2bd4543266bf9126abf60343aba1a29819f2f84b4e88231ecf8be92c71f96807"
+    },
+    {
+      "path": "资源/web/rigby/src/core/binary.js",
+      "size": 67975,
+      "sha256": "f72502207f2dcb9210f36d235f111ed7fe1188b18c3877529e876f4fa2e0fdbb"
+    },
+    {
+      "path": "资源/web/rigby/src/core/bodyparts.js",
+      "size": 4873,
+      "sha256": "3d7ff96039ea77ee25526fb8bbde8662c95bff42af19f561294e0063ed2ae6b6"
+    },
+    {
+      "path": "资源/web/rigby/src/core/clipping.js",
+      "size": 4302,
+      "sha256": "a5f316b4f430729eb724ac888efa32b95140d4f201dd5af773552611055f560a"
+    },
+    {
+      "path": "资源/web/rigby/src/core/constraintdata.js",
+      "size": 7184,
+      "sha256": "5911595f2f2e4393a970bc71706bfec882b0fa7dde13de2fd2424dc30aa69087"
+    },
+    {
+      "path": "资源/web/rigby/src/core/constraintkeys.js",
+      "size": 4259,
+      "sha256": "4f05a01ba64ecb4a1b08b9e1b97da935066e79138eef19815d24239884a06068"
+    },
+    {
+      "path": "资源/web/rigby/src/core/constraints.js",
+      "size": 28903,
+      "sha256": "865473642aef9ee9915bef41fe13faef81ca54b974cdfffd5ea77be2a8643fd0"
+    },
+    {
+      "path": "资源/web/rigby/src/core/curve.js",
+      "size": 3468,
+      "sha256": "031654025e87b8368014192b37f9d3b64f5907401fb3052634fc417a8aeb31d4"
+    },
+    {
+      "path": "资源/web/rigby/src/core/index.js",
+      "size": 1437,
+      "sha256": "5c179032174f5a808aa48d3d5b283eb17d4efee89a1b46d53b8ed1f231a0a00f"
+    },
+    {
+      "path": "资源/web/rigby/src/core/interop.js",
+      "size": 40576,
+      "sha256": "ab5e6058065d174c2648e54b8549bc501d15d935d4a68f8fffabdd2721c78900"
+    },
+    {
+      "path": "资源/web/rigby/src/core/keying.js",
+      "size": 2167,
+      "sha256": "798d89763b21ba863619e7e2dfb0ceee3bcbdbd410bce7ac51644656c510a3b3"
+    },
+    {
+      "path": "资源/web/rigby/src/core/lipsync.js",
+      "size": 15779,
+      "sha256": "8200075565a2cae91a0f0bd656559045cb0732f73a27e1ee644ece2cbb28420e"
+    },
+    {
+      "path": "资源/web/rigby/src/core/math.js",
+      "size": 5385,
+      "sha256": "53c55e79d8cae3379e6e344f10c21b1420fab1584c020b94d680f05f013b04d3"
+    },
+    {
+      "path": "资源/web/rigby/src/core/meshgeom.js",
+      "size": 9061,
+      "sha256": "8a6314b4ddba130f05c3362537586c90d5540ac7746b770006c69a21a51f3fa6"
+    },
+    {
+      "path": "资源/web/rigby/src/core/model.js",
+      "size": 32492,
+      "sha256": "f5a1d671491f07accf8c19ab90e8988ed28a122db998e08a664f87d31fb2fa50"
+    },
+    {
+      "path": "资源/web/rigby/src/core/pose.js",
+      "size": 25436,
+      "sha256": "91dbdcc3e4071e1e6b36bab61c9da0cf6f166aa49a4554785a5d7bc8cb14bd33"
+    },
+    {
+      "path": "资源/web/rigby/src/core/poses.js",
+      "size": 5019,
+      "sha256": "c421a099c0ebd9883b9537e2b70ddf568df1d288afaa8164523bdc491fdbb6f6"
+    },
+    {
+      "path": "资源/web/rigby/src/core/retarget.js",
+      "size": 9859,
+      "sha256": "e88aca2407979eaa8f5bf30f2a8f6846e1317e0be17af96278d9edd1ea2486a8"
+    },
+    {
+      "path": "资源/web/rigby/src/core/scene.js",
+      "size": 17501,
+      "sha256": "64e8de1a8f979859bc48db5baacd18c66a130550aab87e15a5a938e9cdb2df7a"
+    },
+    {
+      "path": "资源/web/rigby/src/core/sequence.js",
+      "size": 1943,
+      "sha256": "74c93f77424506df2c6a174d7a034add6618213e697545faaee48a280c48112a"
+    },
+    {
+      "path": "资源/web/rigby/src/core/state.js",
+      "size": 9206,
+      "sha256": "e18e4533b7eeaf5e9da242f146abd0c934ef4d56bca25679bb462c589a9b38d1"
+    },
+    {
+      "path": "资源/web/rigby/src/webgl/renderer.js",
+      "size": 15158,
+      "sha256": "7a816b5b03dc4eee4120db985ddee188c99ec6ae0789e0da4a36550b7063b05a"
+    },
+    {
+      "path": "资源/web/style.css",
+      "size": 7500,
+      "sha256": "1c7db7109026165dfd6d6ab925c9e66b5dec416c8c43e23a6f58fc1b8e3f9a5d"
+    }
+  ],
+  "chunks": [
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.001",
+      "size": 8388608,
+      "sha256": "e501c00c701a3311328b48fa93da52fece7a817083b30672ba84e5eb8bf1d81c",
+      "gitsha": "8658fe0d415e837e22fb872563f341c8941003f7"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.002",
+      "size": 8388608,
+      "sha256": "ec994fa6951aca89a517ea543fa692d543b262be679a2937896c4c5bc3277824",
+      "gitsha": "b3c9a1f140f99d7b44e8f01360fa96d1e33b2eec"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.003",
+      "size": 8388608,
+      "sha256": "9e81bcada649008633b9913ab3095d25942e0299914a7b6b51737f64d7426a91",
+      "gitsha": "4a185af58654331cfae7d01e08724b4beabe4542"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.004",
+      "size": 8388608,
+      "sha256": "f3aab95605f3fb1228cd6c944553ebcb091ece9b65b40cf7291dcc5cb0273759",
+      "gitsha": "9131a128c9412a79e732f3615c98528dfbbdf517"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.005",
+      "size": 8388608,
+      "sha256": "108bbe23aadd2d9d2e9f2ca3cb1539eb55b75f0f5b947c139e97593965b144c9",
+      "gitsha": "a9c17621edf0dc350ae25b02d54ee38c25949f2c"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.006",
+      "size": 8388608,
+      "sha256": "3216de2261aab1bcd379c64635d3824bc24baa97daffa74284af1d050672f80f",
+      "gitsha": "6df07110dbd723a3c4636c31c132c6c46b7340d3"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.007",
+      "size": 8388608,
+      "sha256": "b56e3b5c9fabd949bcb7b316b54c3e916b9312f7eeff74bd084fc55adb24cebd",
+      "gitsha": "98b12c8a1d02dfadfaa22216acd2109d0aaf7027"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.008",
+      "size": 8388608,
+      "sha256": "6bef5b388dace72007798153cefc5ee9974f6919340c0583c4bc8f61c1e4e63f",
+      "gitsha": "cf24a4d3381b5f40d4fdfe4b2ef29fd133d41c1d"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.009",
+      "size": 8388608,
+      "sha256": "bb3bdc57e929adcd6f0bb1888e6ac2438fed82082ed3ee1272d37fbb7ffc28aa",
+      "gitsha": "8f8ff02a421f4361fe0f76fb235be0b86e6ed297"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.010",
+      "size": 8388608,
+      "sha256": "53c9bb9ff9dbcbb9784b0dd395073e03ee8070bf5197abd3a6aa5647e7033566",
+      "gitsha": "d4af7bc28de15562e3103298fa37025720f8b737"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.011",
+      "size": 8388608,
+      "sha256": "3317bb45c09ab43a5405537da6f4ac1c83d10a375bfce568abc20c4c22a3be1b",
+      "gitsha": "812d32357c5294a7a8d27185a8941d4b5bf47f79"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.012",
+      "size": 8388608,
+      "sha256": "4f7ede37ec19f16f490b8b1a1d635af0f85e49253f772c3ea1192998035d1151",
+      "gitsha": "9c9013614b92be64a8788543c4e7f01dbd4b4a1a"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.013",
+      "size": 8388608,
+      "sha256": "f4e6841a3c21a56badbdb3afab3945ac1ea5aff277e90fc892cc391cd5425ac4",
+      "gitsha": "e2ee1fe1d560de7bb5bda75d48aa79454db4a7a6"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.014",
+      "size": 8388608,
+      "sha256": "f228a8e8c77ae3c18fcacf4cf50f637a8deb269038d37fffb1a07659e297ee19",
+      "gitsha": "f67b7028aaf0496b34783241c4f3b640d2b8c5d2"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.015",
+      "size": 8388608,
+      "sha256": "db632d52aaf6f0892d7710465fd3c17747a655d865a731295845356c4d825556",
+      "gitsha": "64ab16178f9063d47646fcf4131d7edc46b586f3"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.016",
+      "size": 8388608,
+      "sha256": "6bbd0115dd2c2ed2fb007b59c48b0f5fe3b299ab1f0907f1057a3caf8a0d69ce",
+      "gitsha": "5dd2c0937cfbcad7962d7822e302123342cf9cae"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.017",
+      "size": 8388608,
+      "sha256": "d8174a2285132ed89f67d0aa2ec77f57340bef3afcba373e084ca607daa9bf36",
+      "gitsha": "2997c5fa91edbca5ffa54b7ba94b9e1d4ccdff2c"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.018",
+      "size": 8388608,
+      "sha256": "b612ef671403d2aa6933bbb8b910730d088a92a019248669b66217433ea9aa5c",
+      "gitsha": "fffca2e527c587fe8c731f6f60d1bfc99ad42be8"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.019",
+      "size": 8388608,
+      "sha256": "2b83a7c830bd2035c11133246ce3278d003e9e1e71e6a74fda05c7f9ca4ab931",
+      "gitsha": "1d6dfe8b39d6fd4028e2e49a0bcb8b8b9cda7117"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.020",
+      "size": 8388608,
+      "sha256": "c48179339e7e636d612f167cbd1d4032470aaf8f5057322715138c04a99334ab",
+      "gitsha": "7e90b24a0c1ac47e354b7f06fbbca3d05d7bd23a"
+    },
+    {
+      "path": "MD-Animation-Replacement-Assistant-v1.4.0-win-x64.zip.021",
+      "size": 6407268,
+      "sha256": "c1896ff7d86628e5e91a7281b06332c79851705781e7baba1497ab8aee40b976",
+      "gitsha": "1a5ddb2899ae8c27d58c9ba03db8599657313a87"
+    }
+  ],
+  "archiveSha256": "d3e4006391ff844aa4d39f406a457e192f961836c9a346319df81641e887ba06",
+  "archiveSize": 174179428
+}
