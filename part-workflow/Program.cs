@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -86,16 +86,62 @@ app.MapGet("/rigby/{**relative}", (string relative) =>
     return Path.GetExtension(file) == ".js" ? Results.File(file, "text/javascript; charset=utf-8") : Results.BadRequest();
 });
 app.MapGet("/style.css", () => Results.File(Path.Combine(web, "style.css"), "text/css; charset=utf-8"));
-app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.4.0" }));
+app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.6" }));
 app.MapGet("/api/bootstrap", () => { lock (store.Gate) return Results.Ok(new { Cards = store.Choices(), Projects = store.Recent(), SamAvailable = sam.ModelDirectory.Length > 0,Installation=settings.Info() }); });
 app.MapGet("/api/settings",()=>Results.Ok(settings.Info()));
 app.MapPost("/api/settings",(GameSettings value)=>{if(updater.Running)throw new InvalidOperationException("更新中不能切换游戏目录");settings.Save(value);return Results.Ok(settings.Info());});
-app.MapPost("/api/settings/browse",async()=>Results.Ok(new{Path=await NativeDialogs.PickGameFolder()}));
+app.MapPost("/api/settings/browse", async (FolderPickerRequest? request) => Results.Ok(new
+{
+    Path = await NativeDialogs.PickFolder("选择包含 masterduel.exe 的游戏目录", request?.InitialPath ?? settings.Read().GameRoot)
+}));
 app.MapGet("/api/library/status",()=>Results.Ok(updater.Snapshot()));
 app.MapPost("/api/library/update",()=>Results.Ok(updater.Start()));
 app.MapPost("/api/library/cancel",()=>{updater.Cancel();return Results.Ok();});
+app.MapGet("/api/effects/catalog", () => Results.Ok(EffectCatalog.Read(workspace)));
+app.MapPost("/api/effects/extract", async (EffectExportRequest request, HttpContext context) =>
+{
+    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再提取。");
+    var (content, fileName) = await EffectExport.Create(workspace, settings.Read(), request.CardId, context.RequestAborted);
+    context.Response.Headers["X-Workflow-Filename"] = Uri.EscapeDataString(fileName);
+    return Results.File(content, "application/zip");
+});
+app.MapPost("/api/effects/browse", async (FolderPickerRequest? request) => Results.Ok(new
+{
+    Path = await NativeDialogs.PickFolder("选择含有效果贴图映射.json的素材目录", request?.InitialPath)
+}));
+app.MapPost("/api/effects/pack", (EffectFolderRequest request, HttpContext context) =>
+{
+    var (content, fileName) = EffectPackage.Pack(workspace, settings.Read(), request.Folder, request.CardId);
+    context.Response.Headers["X-Workflow-Filename"] = Uri.EscapeDataString(fileName);
+    return Results.File(content, "application/zip");
+});
 app.MapPost("/api/library/cache/clear",()=>{lock(store.Gate)return Results.Ok(OnDemandLibrary.ClearUnused(store));});
 app.MapPost("/api/projects", (NewProjectRequest request) => { lock (store.Gate) return Results.Ok(store.Create(request)); });
+app.MapPost("/api/rigby/export", (NewProjectRequest request, HttpContext context) =>
+{
+    lock (store.Gate)
+    {
+        var (content, fileName) = RigbyExport.Create(store, request);
+        context.Response.Headers["X-Rigby-Filename"] = Uri.EscapeDataString(fileName);
+        return Results.File(content, "application/zip");
+    }
+});
+app.MapPost("/api/rigby/browse", async (FolderPickerRequest? request) => Results.Ok(new
+{
+    Path = await NativeDialogs.PickFolder("选择已编辑的召唤素材文件夹", request?.InitialPath)
+}));
+app.MapPost("/api/rigby/pack", (SummonPackRequest request, HttpContext context) =>
+{
+    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再打包。");
+    lock (store.Gate)
+    {
+        var (content, fileName, repairs) = SummonPackage.Pack(store, settings.Read(), request);
+        context.Response.Headers["X-Workflow-Filename"] = Uri.EscapeDataString(fileName);
+        if (repairs.Count > 0)
+            context.Response.Headers["X-Workflow-Repairs"] = Uri.EscapeDataString(string.Join("、", repairs));
+        return Results.File(content, "application/zip");
+    }
+});
 app.MapGet("/api/projects/{id}", (string id) => { lock (store.Gate) return Results.Ok(store.Load(id)); });
 app.MapGet("/files/{id}/{**relative}", (string id, string relative) =>
 {
@@ -201,7 +247,7 @@ await app.StartAsync();
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single() + "/";
 JsonFile.Write(activeFile, new Dictionary<string, string> { ["Url"] = address, ["Token"] = token, ["Pid"] = Environment.ProcessId.ToString() });
 File.WriteAllText(Path.Combine(AppEnvironment.Runtime(workspace),"打开工作台.url"),"[InternetShortcut]\r\nURL="+address+"#"+token+"\r\n");
-Console.WriteLine("MD动画替换助手 1.4.0\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
+Console.WriteLine("MD动画替换助手 1.5.6\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
 if (!args.Contains("--no-browser")) TryOpenBrowser(address + "#" + token);
 await app.WaitForShutdownAsync();
 

@@ -1,12 +1,37 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MD动画替换助手</title><link rel="stylesheet" href="/style.css"></head>
 <body>
-<header><div><strong>MD动画替换助手</strong><small>本地运行 · 沿用原骨骼与动作</small></div><div class="row"><span id="saveState">1.4.0 独立版</span><button id="homeButton">项目列表</button><button id="quitButton">关闭工具</button></div></header>
+<header><div><strong>MD动画替换助手</strong><small>本地运行 · 动画素材编辑与回包</small></div><div class="row"><span id="saveState">1.5.6 独立版</span><button id="homeButton">项目列表</button><button id="quitButton">关闭工具</button></div></header>
 <div id="notice" role="status">正在读取本机素材库…</div>
 <main id="home">
   <section class="intro"><p class="eyebrow">从原动画部件开始</p><h1>选卡 → 圈选部件 → 对齐确认 → 导出</h1><p>首次使用先在下方选择游戏安装目录。然后选卡、上传立绘，按部件完成替换；可随时返回重做。</p></section>
-  <section class="setup panel"><h2>新建项目</h2><label>查找卡名或卡号<input id="cardSearch" placeholder="例如：零萝 / 21460"></label><label>卡片<select id="cardSelect"></select></label><label>地区与画质<select id="variantSelect"></select></label><button class="primary" id="createButton">创建部件替换项目</button><p class="muted">选卡后才读取所需游戏资源。项目会自动保存，可下次继续。</p></section>
+  <section class="setup panel">
+    <h2>怪兽召唤切入</h2>
+    <label>查找卡名或卡号<input id="cardSearch" placeholder="例如：零萝 / 21460"></label>
+    <label>卡片<select id="cardSelect"></select></label>
+    <label>地区与画质<select id="variantSelect"></select></label>
+    <button class="primary" id="createButton">创建部件替换项目</button>
+    <p class="muted">项目会自动保存，可下次继续。</p>
+    <button id="rigbyExportButton" disabled>导出 Rigby2D 文件</button>
+    <p class="muted">解压后在 Rigby2D 中打开 JSON。回包时选择导出时的卡片和画质。</p>
+    <label>编辑完成的召唤素材文件夹<input id="summonFolder" placeholder="选择编辑后的素材目录"></label>
+    <div class="row"><button id="summonBrowseButton">选择召唤文件夹</button><button id="summonPackButton" class="primary" disabled>打包召唤替换文件</button><a id="summonPackDownload" class="packDownload" hidden>下载替换 ZIP</a></div>
+    <p id="summonPackStatus" class="packStatus" role="status" aria-live="polite"></p>
+    <p class="muted">选择编辑后的素材目录，可以回包骨架 JSON、atlas 和 PNG，也可以只回包骨架 JSON。请沿用原文件名并选择对应的卡片和画质。可按原版恢复的约束顺序会在打包时修正。</p>
+  </section>
+  <section class="panel recent">
+    <h2>卡片效果动画</h2>
+    <p id="effectCount" class="muted">正在读取效果目录…</p>
+    <label>查找效果卡名或卡号<input id="effectSearch" placeholder="例如 黑之魔导的帘布 / 22692"></label>
+    <label>效果卡片<select id="effectSelect"><option value="">选择效果卡片</option></select></label>
+    <button id="effectExtractButton" class="primary" disabled>提取 Rigby2D 效果素材</button>
+    <p class="muted">解压 ZIP，在 Rigby2D 中打开要编辑的 JSON，并将同名 atlas 和 PNG 留在同一目录。</p>
+    <label>编辑完成的素材文件夹<input id="effectFolder" placeholder="选择含「效果贴图映射.json」的目录"></label>
+    <div class="row"><button id="effectBrowseButton">选择效果文件夹</button><button id="effectPackButton" class="primary" disabled>打包效果替换文件</button><a id="effectPackDownload" class="packDownload" hidden>下载替换 ZIP</a></div>
+    <p id="effectPackStatus" class="packStatus" role="status" aria-live="polite"></p>
+    <p class="muted">直接修改原图集 PNG，或将 Rigby2D 以「JSON + Atlas」导出的同名 atlas 和 PNG 放入「Rigby2D导出」子文件夹。只修改 JSON 或 .rigby 工程时，没有贴图可回包。</p>
+  </section>
   <section class="panel recent"><h2>继续已有项目</h2><div id="recentProjects"></div></section>
   <section class="panel libraryManager"><h2>游戏目录与素材库更新</h2><p id="libraryInfo" class="muted">随程序附带卡片目录；选择卡片后才从游戏临时提取，启动不扫描。</p><div class="row"><label style="flex:1">游戏安装目录<input id="gameRootInput" placeholder="选择包含 masterduel.exe 的目录"></label><button id="browseGameButton">选择文件夹</button></div><div class="row"><label>账号资源<select id="gameAccountSelect"></select></label><button id="saveGameButton">应用目录</button><button id="updateLibraryButton" class="primary">更新动画素材与目录</button><button id="cancelLibraryButton" disabled>停止更新</button><button id="clearCacheButton">清理未使用素材缓存</button></div><p id="libraryPhase" class="muted">现有素材立即可用。更新只在点击按钮后开始。</p><pre id="libraryLog" style="max-height:180px;overflow:auto;white-space:pre-wrap;font-size:12px"></pre></section>
 </main>

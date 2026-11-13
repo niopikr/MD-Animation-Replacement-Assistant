@@ -1,4 +1,4 @@
-﻿using CardAssetWorkbench;
+using CardAssetWorkbench;
 
 namespace PartWorkflow;
 public sealed class LibraryUpdater(ProjectStore store,InstallSettings settings,int[]? testOnly=null)
@@ -31,6 +31,8 @@ public sealed class LibraryUpdater(ProjectStore store,InstallSettings settings,i
                 }
                 Log("读取现有索引；仅检查新增或变动资源。");
                 var index=AssetIndex.Scan(config.GameRoot,config.Account,cache,Path.Combine(root,"不使用数据库.db"),Log,token);
+                EffectCatalog.Update(index,root);
+                Log("效果动画目录已刷新。");
                 lock(gate)phase="extract";
                 var result=File.Exists(Path.Combine(AppEnvironment.Library(root),"catalog-only.json"))?PortableCatalog.Update(index,AppEnvironment.Library(root),Log,token,testOnly):BulkLibrary.Run(index,AppEnvironment.Library(root),Log,token,testOnly);
                 lock(store.Gate)store.InvalidateChoices();

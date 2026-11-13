@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using SixLabors.ImageSharp;
@@ -63,9 +63,10 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
             .Where(p => p is not null).OrderByDescending(p => p!.UpdatedUtc)
             .Select(p => new { p!.Id, p.CardId, p.ChineseName, p.UpdatedUtc, Completed = p.Parts.Count(x => x.Status != "pending"), Total = p.Parts.Count });
     }
-    public ProjectState Create(NewProjectRequest request)
+    internal (CardChoice Card, string Variant, string Version, string ConfigPath, string Source, string SkeletonFile, string AtlasFile) OpenModel(NewProjectRequest request)
     {
-        var card = Choices().Single(c => c.Id == request.CardId);
+        var card = Choices().SingleOrDefault(c => c.Id == request.CardId)
+            ?? throw new InvalidDataException("目录中没有这张卡的可编辑动画");
         var variant = string.IsNullOrEmpty(request.Variant) ? card.Variants.FirstOrDefault(x => x.Contains("高清")) ?? card.Variants[0] : request.Variant;
         if (!card.Variants.Contains(variant)) throw new InvalidDataException("所选地区/画质不存在");
         var version = OnDemandLibrary.Ensure(Workspace,card.VersionFolder,variant);
@@ -75,6 +76,11 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
         var source = Path.GetDirectoryName(configPath)!;
         var skeletonFile = config["skeleton"]!.GetValue<string>();
         var atlasFile = config["atlases"]![0]!["atlas"]!.GetValue<string>();
+        return (card, variant, version, configPath, source, skeletonFile, atlasFile);
+    }
+    public ProjectState Create(NewProjectRequest request)
+    {
+        var (card, variant, version, configPath, source, skeletonFile, atlasFile) = OpenModel(request);
         var skeleton = JsonNode.Parse(File.ReadAllText(Under(source, skeletonFile)))!;
         var spine = skeleton["skeleton"]?["spine"]?.GetValue<string>() ?? "未知";
         if (!spine.StartsWith("4.2.")) throw new InvalidDataException($"当前版本验证范围为 Spine 4.2，所选为 {spine}");

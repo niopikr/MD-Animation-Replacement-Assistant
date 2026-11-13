@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Security.Cryptography;
@@ -175,7 +175,7 @@ public sealed class GameReplacementExporter(ProjectStore store, Exporter preview
                     if(edit is null){af.file.Reader.Position=info.GetAbsoluteByteOffset(af.file);if(preserved[$"{i}:{info.PathId}"]!=Hash(af.file.Reader.ReadBytes(checked((int)info.ByteSize))))throw new InvalidDataException("未修改对象字节发生变化");untouched++;continue;}
                     var field=am.GetBaseField(af,info);if(field["m_Name"].AsString!=edit.Asset.Name)throw new InvalidDataException("写出资源名称不一致");
                     if(edit.Png is not null){var tex=TextureFile.ReadTextureFile(field);tex.FillPictureData(af);var bytes=tex.DecodeTextureRaw(tex.pictureData)!;using var expected=Image.Load<Bgra32>(edit.Png);expected.Mutate(c=>c.Flip(FlipMode.Vertical));var pixels=new byte[expected.Width*expected.Height*4];expected.CopyPixelDataTo(pixels);if(tex.m_Width!=expected.Width||tex.m_Height!=expected.Height||!pixels.SequenceEqual(bytes))throw new InvalidDataException("Texture2D回读像素不一致");}
-                    else{byte[] bytes;try{bytes=field["m_Script"].AsByteArray;}catch{bytes=field["m_Script"]["Array"].AsByteArray;}if(!bytes.SequenceEqual(edit.Text!))throw new InvalidDataException("Atlas回读不一致");}verified++;
+                    else{byte[] bytes;try{bytes=field["m_Script"].AsByteArray;}catch{bytes=field["m_Script"]["Array"].AsByteArray;}if(!bytes.SequenceEqual(edit.Text!))throw new InvalidDataException($"文本资源「{edit.Asset.Name}」回读不一致");}verified++;
                 }
             }
             if(verified!=edits.Length||untouched!=preserved.Count)throw new InvalidDataException("资源数量或PathID发生变化");

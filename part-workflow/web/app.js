@@ -1,8 +1,10 @@
-﻿'use strict';
+'use strict';
 const $ = id => document.getElementById(id);
 const token = location.hash.slice(1) || sessionStorage.getItem('workflowToken');
 if (token) sessionStorage.setItem('workflowToken', token);
 let bootstrap, project, part, source, reference, mesh, cutout;
+let effectCards = [];
+let libraryTimer=null,libraryRunning=false,libraryLastJob='';
 let busy = false, mode = 'manual', mask = document.createElement('canvas'), undo = [];
 let view = {scale:1,x:0,y:0}, pointer = null, polygon = [], space = false, latestExport;
 let dirtyMask = false, placementTimer, draftQueue = Promise.resolve(), loadGeneration = 0;
@@ -14,11 +16,22 @@ function message(text, error=false){$('notice').textContent=text;$('notice').cla
 function saveText(text){$('saveState').textContent=text;}
 async function api(path, body, raw=false){
   const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'X-Workflow-Token':token,...(body!==undefined&&!raw?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:raw?body:JSON.stringify(body)});
-  if(!response.ok){let error;try{error=(await response.json()).error}catch{error=await response.text()}throw Error(error||`请求失败 ${response.status}`);}
-  if(response.headers.get('content-type')?.includes('image/')) return response.blob();
+  if(!response.ok){
+    const detail=await response.text();
+    let error=detail;
+    try{error=JSON.parse(detail).error||detail}catch{}
+    throw Error(error||`请求失败 ${response.status}`);
+  }
+  const type=response.headers.get('content-type')||'';
+  if(type.includes('application/zip')){
+    const encoded=response.headers.get('x-workflow-filename')||response.headers.get('x-rigby-filename');
+    const repairs=response.headers.get('x-workflow-repairs');
+    return {blob:await response.blob(),filename:encoded?decodeURIComponent(encoded):'Rigby2D.zip',repairs:repairs?decodeURIComponent(repairs):''};
+  }
+  if(type.includes('image/')) return response.blob();
   return response.headers.get('content-type')?.includes('json')?response.json():null;
 }
-async function action(fn){if(busy)return;busy=true;document.body.classList.add('busy');setControls();try{await fn()}catch(e){message(e.message,true)}finally{busy=false;setControls()}}
+async function action(fn){if(busy)return;busy=true;document.body.classList.add('busy');setControls();try{await fn()}catch(e){message(e.message,true)}finally{busy=false;document.body.classList.remove('busy');setControls()}}
 function image(url){return new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(Error('无法读取图片：'+url));i.src=url;})}
 function fileUrl(relative,stamp=true){return `/files/${project.id}/${relative.split(/[\\/]/).map(encodeURIComponent).join('/')}?t=${token}${stamp?'&v='+Date.now():''}`;}
 function partApi(suffix, p=part){return `/api/projects/${project.id}/parts/${p.number}/${suffix}`;}
@@ -26,6 +39,16 @@ function setControls(){
   if(!$('sourceCanvas'))return;
   for(const id of ['createButton','keepPendingButton','artworkInput','previewButton','exportButton','keepButton','restoreButton','generateButton','refineButton','confirmButton','previousButton','nextButton','homeButton','folderButton','undoButton','clearButton','samModeButton','lassoButton','pointButton','manualBrushButton','shapeButton','emptyButton','sourceZoomIn','sourceZoomOut','cutoutZoomIn','cutoutZoomOut','cutoutActualSize']) $(id).disabled=busy;
   $('keepPendingButton').disabled=busy||!project||!project.parts.some(p=>p.status==='pending');
+  $('rigbyExportButton').disabled=busy||!$('variantSelect').value;
+  $('summonBrowseButton').disabled=busy;
+  $('summonFolder').disabled=busy;
+  $('summonPackButton').disabled=busy||libraryRunning;
+  $('effectSearch').disabled=busy;
+  $('effectSelect').disabled=busy||$('effectSelect').options.length===1;
+  $('effectExtractButton').disabled=busy||libraryRunning||!$('effectSelect').value;
+  $('effectBrowseButton').disabled=busy;
+  $('effectFolder').disabled=busy;
+  $('effectPackButton').disabled=busy;
   $('previousButton').disabled=busy||!project||project.currentPart<=0;
   $('nextButton').disabled=busy||!project||project.currentPart>=project.parts.length-1;
   $('generateButton').disabled=busy||!source;
@@ -49,11 +72,12 @@ function populateCards(){
 }
 function populateVariants(){
   const c=bootstrap.cards.find(c=>c.id===+$('cardSelect').value);$('variantSelect').replaceChildren();
-  if(!c)return;
+  if(!c){setControls();return;}
   for(const v of c.variants)$('variantSelect').append(new Option(v.replaceAll('\\','/').split('/').slice(-2,-1)[0],v));
   $('variantSelect').value=c.variants.find(v=>v.includes('高清'))||c.variants[0];
+  setControls();
 }
-async function home(){await flushDrafts();bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);if(!libraryTimer)pollLibrary();$('recentProjects').replaceChildren();
+async function home(){await flushDrafts();bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);await loadEffectCatalog();if(!libraryTimer)pollLibrary();$('recentProjects').replaceChildren();
   for(const p of bootstrap.projects){const button=document.createElement('button');const title=document.createElement('span');title.textContent=`${p.chineseName}〔${p.cardId}〕`;const info=document.createElement('small');info.textContent=`${p.completed}/${p.total} 已确认 · ${new Date(p.updatedUtc).toLocaleString()} · ${p.id}`;button.append(title,info);button.onclick=()=>action(()=>openProject(p.id));$('recentProjects').append(button);}
   if(!bootstrap.projects.length)$('recentProjects').textContent='尚无项目。新建后会自动保存在本机。';
   $('home').hidden=false;$('editor').hidden=true;message(bootstrap.samAvailable?'已找到本地素材库和 SAM 2.1。可新建项目，或继续已有进度。':'已找到本地素材库。当前未找到 SAM 2.1 模型，可正常使用套索。');
@@ -164,6 +188,107 @@ async function exportPackage(final){
 }
 $('cardSearch').oninput=populateCards;$('cardSelect').onchange=populateVariants;
 $('createButton').onclick=()=>action(async()=>{if(!$('cardSelect').value)throw Error('请先选择卡片');message('正在读取骨骼并准备原部件参考…');const p=await api('/api/projects',{cardId:+$('cardSelect').value,variant:$('variantSelect').value});await openProject(p.id);});
+$('rigbyExportButton').onclick=()=>action(async()=>{
+  message('正在提取动画并打包 Rigby2D 文件…');
+  const archive=await api('/api/rigby/export',{cardId:+$('cardSelect').value,variant:$('variantSelect').value});
+  if(!archive?.blob)throw Error('未收到 Rigby2D ZIP，请重试。');
+  downloadZip(archive);
+  message('Rigby2D ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开 JSON。');
+});
+function downloadZip({blob,filename}){
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement('a');
+  link.href=url;
+  link.download=filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+async function loadEffectCatalog(){
+  effectCards=(await api('/api/effects/catalog')).sort((a,b)=>a.name.localeCompare(b.name,'zh-CN')||a.cardId-b.cardId);
+  $('effectCount').textContent=`已收录 ${effectCards.length} 张效果卡片。更新素材目录后可选择新卡。`;
+  populateEffects();
+}
+function populateEffects(){
+  const select=$('effectSelect'), current=select.value;
+  const filter=$('effectSearch').value.trim().normalize('NFKC').toLowerCase();
+  const matches=effectCards.filter(card=>`${card.name} ${card.cardId}`.normalize('NFKC').toLowerCase().includes(filter));
+  select.replaceChildren(new Option(matches.length?'选择效果卡片':'没有匹配的效果卡片',''),
+    ...matches.map(card=>new Option(`${card.name}〔${card.cardId}〕`,card.cardId)));
+  if(matches.some(card=>String(card.cardId)===current))select.value=current;
+  else if(matches.length===1)select.value=matches[0].cardId;
+  setControls();
+}
+$('effectSearch').oninput=populateEffects;
+$('effectSelect').onchange=setControls;
+$('effectExtractButton').onclick=()=>action(async()=>{
+  const cardId=Number($('effectSelect').value);
+  if(!cardId)throw Error('请先选择效果卡片。');
+  message('正在从本机游戏提取效果动画并生成 Rigby2D 素材…');
+  const archive=await api('/api/effects/extract',{cardId});
+  if(!archive?.blob)throw Error('未收到效果素材 ZIP，请重试。');
+  downloadZip(archive);
+  message('效果素材 ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开效果 JSON。');
+});
+function bindTexturePack(prefix, route, folderHint, selection){
+  const field=$(prefix+'Folder'), button=$(prefix+'PackButton');
+  const link=$(prefix+'PackDownload'), status=$(prefix+'PackStatus');
+  const label=button.textContent;
+  function show(text,error=false){
+    status.textContent=text;
+    status.classList.toggle('error',error);
+  }
+  function clear(){
+    if(link.hasAttribute('href'))URL.revokeObjectURL(link.href);
+    link.removeAttribute('href');
+    link.hidden=true;
+    show('');
+  }
+  field.oninput=clear;
+  $(prefix+'BrowseButton').onclick=()=>action(async()=>{
+    const result=await api(route+'/browse',{initialPath:field.value});
+    if(result?.path){
+      field.value=result.path;
+      clear();
+    }
+  });
+  button.onclick=()=>{
+    if(busy)return;
+    clear();
+    const folder=field.value.trim();
+    if(!folder){
+      show(folderHint,true);
+      field.focus();
+      return;
+    }
+    return action(async()=>{
+      button.textContent='正在打包…';
+      show('正在检查素材并生成替换文件，请稍候。');
+      try{
+        const archive=await api(route+'/pack',{folder,...selection()});
+        if(!archive?.blob)throw Error('未收到替换 ZIP，请重试。');
+        link.href=URL.createObjectURL(archive.blob);
+        link.download=archive.filename;
+        link.hidden=false;
+        const repairs=archive.repairs?`已恢复原版约束顺序：${archive.repairs}。`:'';
+        show(`已生成 ${archive.filename}。${repairs}如果下载未开始，请点击「下载替换 ZIP」。`);
+        link.click();
+      }catch(e){
+        const hint=e.message.startsWith('没有找到改动的 PNG')
+          ? ' 若在 Rigby2D 编辑，请将导出的同名 atlas 和 PNG 放到素材根目录下的「Rigby2D导出」文件夹。'
+          : '';
+        show(`打包失败。 ${e.message}${hint}`,true);
+      }finally{
+        button.textContent=label;
+      }
+    });
+  };
+}
+bindTexturePack('summon','/api/rigby','请先选择已解压的召唤素材文件夹。',
+  ()=>({cardId:Number($('cardSelect').value),variant:$('variantSelect').value}));
+bindTexturePack('effect','/api/effects','请先选择含「效果贴图映射.json」的素材文件夹。',
+  ()=>({cardId:Number($('effectSelect').value)||null}));
 $('artworkInput').onchange=()=>action(async()=>{const f=$('artworkInput').files[0];if(!f)return;message('正在保存立绘到本机项目…');project=await api(`/api/projects/${project.id}/artwork`,f,true);await openProject(project.id);});
 $('homeButton').onclick=()=>action(home);$('quitButton').onclick=()=>action(async()=>{if(!confirm('保存进度并关闭本机工作流服务？'))return;await flushDrafts();await api('/api/quit',{});document.body.innerHTML='<main style="padding:50px"><h1>工作流已关闭</h1><p>进度已保存在本机。下次双击入口即可继续。</p></main>';});
 function setMode(value,id){mode=value;polygon=[];for(const b of ['lassoButton','pointButton','samModeButton','manualBrushButton','shapeButton'])$(b).classList.toggle('active',b===id);$('shapeControls').hidden=value!=='shape';renderSource();}
@@ -195,11 +320,10 @@ $('cutoutPercent').oninput=()=>{if(!cutout||busy)return;const value=Number($('cu
 $('cutoutPercent').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('cutoutPercent').blur();}};
 $('gamePreviewButton').onclick=()=>action(async()=>{$('exportDialog').close();await window.openAnimationPreview(project.id,token);});
 
-let libraryTimer=null,libraryRunning=false,libraryLastJob='';
 function showInstallation(info){if(!info)return;$('gameRootInput').value=info.gameRoot||'';$('gameAccountSelect').replaceChildren(...info.accounts.map(a=>new Option(a,a)));$('gameAccountSelect').value=info.account;$('libraryInfo').textContent=`目录已收录 ${info.libraryCards} 张，其中 ${bootstrap.cards.length} 张可逐部件编辑。启动时不扫描；打开卡片时临时提取所需游戏资源。`;}
 function updateLibraryDisplay(s){libraryRunning=s.running;$('libraryPhase').textContent=({idle:'现有素材立即可用。点击更新后才检查游戏文件。',scan:'正在检查新增或变动的游戏资源…',extract:'正在增量提取动画素材，并更新卡名目录…',completed:'素材及卡名目录已更新。',partial:'更新完成，部分资源未能提取，详情见记录。',cancelled:'更新已停止，已完成的素材保留。',failed:'更新失败：'+s.error})[s.phase]||s.phase;$('libraryLog').textContent=s.messages.join('\n');for(const id of ['gameRootInput','gameAccountSelect','browseGameButton','saveGameButton','updateLibraryButton'])$(id).disabled=s.running;$('cancelLibraryButton').disabled=!s.running;}
-async function pollLibrary(){if(libraryTimer){clearTimeout(libraryTimer);libraryTimer=null;}try{const state=await api('/api/library/status');updateLibraryDisplay(state);if(state.running)libraryTimer=setTimeout(pollLibrary,1200);else if(state.job&&state.job!==libraryLastJob){libraryLastJob=state.job;bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);}}catch(e){$('libraryPhase').textContent=e.message;}}
-$('browseGameButton').onclick=()=>action(async()=>{const result=await api('/api/settings/browse',{});if(!result.path)return;const info=await api('/api/settings',{gameRoot:result.path,account:$('gameAccountSelect').value});showInstallation(info);message('游戏目录已保存；现有素材继续使用，不会自动扫描。');});
+async function pollLibrary(){if(libraryTimer){clearTimeout(libraryTimer);libraryTimer=null;}try{const state=await api('/api/library/status');updateLibraryDisplay(state);if(state.running)libraryTimer=setTimeout(pollLibrary,1200);else if(state.job&&state.job!==libraryLastJob){libraryLastJob=state.job;bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);await loadEffectCatalog();}}catch(e){$('libraryPhase').textContent=e.message;}}
+$('browseGameButton').onclick=()=>action(async()=>{const result=await api('/api/settings/browse',{initialPath:$('gameRootInput').value});if(!result.path)return;const info=await api('/api/settings',{gameRoot:result.path,account:$('gameAccountSelect').value});showInstallation(info);message('游戏目录已保存；现有素材继续使用，不会自动扫描。');});
 $('saveGameButton').onclick=()=>action(async()=>{const info=await api('/api/settings',{gameRoot:$('gameRootInput').value,account:$('gameAccountSelect').value});showInstallation(info);message('游戏目录与账号已保存。');});
 $('updateLibraryButton').onclick=()=>action(async()=>{const state=await api('/api/library/update',{});updateLibraryDisplay(state);pollLibrary();message('已开始增量更新，完成后自动刷新卡名目录。');});
 $('cancelLibraryButton').onclick=()=>action(()=>api('/api/library/cancel',{}));

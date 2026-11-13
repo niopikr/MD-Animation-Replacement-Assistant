@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -71,7 +71,7 @@ public static class PortableCatalog
             {
                 if(!index.ChineseNames.TryGetValue(id,out var name))throw new InvalidDataException("没有游戏中文卡名，未猜测名称");
                 var sources=associations[id].Select(b=>digests[b.Path]).ToList();var fingerprint=BulkLibrary.Fingerprint(id,name,sources);var previous=state.Cards.GetValueOrDefault(id);
-                if(previous!=null&&previous.Fingerprint==fingerprint&&previous.Files.All(f=>File.Exists(Path.Combine(library,f.File))&&new FileInfo(Path.Combine(library,f.File)).Length==f.Length)){report.Skipped++;continue;}
+                if(previous!=null&&previous.PreviewCount>0&&previous.Fingerprint==fingerprint&&previous.Files.All(f=>File.Exists(Path.Combine(library,f.File))&&new FileInfo(Path.Combine(library,f.File)).Length==f.Length)){report.Skipped++;continue;}
                 var assets=new List<LibraryAsset>();foreach(var b in associations[id])foreach(var a in b.Assets){var logical=b.Containers.FirstOrDefault(c=>Path.GetFileName(c).StartsWith(a.Name,StringComparison.OrdinalIgnoreCase))??b.Containers.FirstOrDefault()??"";assets.Add(new(Path.GetFileName(b.Path),a,logical,"", ""));}
                 var variants=Describe(index,assets,manager,token);var folder=Path.Combine("卡片",BulkLibrary.SafeComponent(name)+$"〔{id}〕");
                 var card=new CardState{Id=id,ChineseName=name,Folder=folder,VersionFolder=Path.Combine(folder,"版本",report.RunId+"-"+fingerprint[..12]),Fingerprint=fingerprint,BundleCount=sources.Count,TextureCount=assets.Count(a=>a.Asset.Type=="Texture2D")};
@@ -86,18 +86,80 @@ public static class PortableCatalog
     }
     static List<CatalogVariant> Describe(GameIndex index,List<LibraryAsset> assets,ManagerScope manager,CancellationToken token)
     {
-        var result=new List<CatalogVariant>();var skeletons=new List<LibraryAsset>();
-        foreach(var a in assets.Where(a=>a.Asset.Type=="TextAsset"&&a.LogicalPath.EndsWith(".json",StringComparison.OrdinalIgnoreCase)))
-        {token.ThrowIfCancellationRequested();try{var node=JsonNode.Parse(manager.Text(index,a));if(node?["bones"]!=null&&node["animations"]!=null)skeletons.Add(a);}catch(JsonException){}}
-        foreach(var a in assets.Where(a=>a.Asset.Type=="TextAsset"&&a.Asset.Name.Contains("atlas",StringComparison.OrdinalIgnoreCase)))
+        var result = new List<CatalogVariant>();
+        var paths = new Regex(@"/monstercutin/(.*?)/p\d+/((?:highend_hd|sd)/.+)$", RegexOptions.IgnoreCase);
+        var modelAssets = assets.Where(a => paths.IsMatch(a.LogicalPath)).ToArray();
+        var textures = modelAssets.Where(a => a.Asset.Type == "Texture2D").ToArray();
+        var textAssets = modelAssets.Where(a => a.Asset.Type == "TextAsset").ToArray();
+        var atlases = textAssets.Where(a => a.Asset.Name.Contains(".atlas", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var skeletons = new List<LibraryAsset>();
+        foreach (var asset in textAssets.Except(atlases))
         {
-            var pages=LibraryPreview.AtlasPages(Encoding.UTF8.GetString(manager.Text(index,a)));var family=Family(a.LogicalPath);var candidates=skeletons.Where(s=>Family(s.LogicalPath)==family).ToArray();if(candidates.Length!=1)continue;
-            var textures=pages.Select(n=>assets.SingleOrDefault(t=>t.Asset.Type=="Texture2D"&&t.Asset.Name.Equals(Path.GetFileNameWithoutExtension(n),StringComparison.OrdinalIgnoreCase)&&Path.GetDirectoryName(t.LogicalPath)==Path.GetDirectoryName(a.LogicalPath))).ToList();if(textures.Any(t=>t==null))continue;
-            var match=Regex.Match(a.LogicalPath,@"/monstercutin/(.*?)/p\d+/(.*)");if(!match.Success)continue;
-            var label=(match.Groups[1].Value+"-"+Path.GetDirectoryName(match.Groups[2].Value)!.Replace('\\','-').Replace('/','-')).Replace("highend_hd","高清").Replace("sd","低清");
-            var skeleton=candidates[0];result.Add(new(Path.Combine("模型",label,"model.config.json"),skeleton.Asset.Name+".json",a.Asset.Name.EndsWith(".atlas")?a.Asset.Name:a.Asset.Name+".atlas",skeleton,a,textures!));
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                using var json = JsonDocument.Parse(manager.Text(index, asset));
+                var root = json.RootElement;
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("bones", out _) && root.TryGetProperty("animations", out _))
+                    skeletons.Add(asset);
+            }
+            catch (JsonException) { }
+        }
+        foreach (var family in atlases.GroupBy(a => Family(a.LogicalPath)))
+        {
+            var standalone = family.Where(a => a.LogicalPath.EndsWith(".atlas.txt", StringComparison.OrdinalIgnoreCase)
+                || a.LogicalPath.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var localSkeletons = skeletons.Where(s => Family(s.LogicalPath) == family.Key).ToArray();
+            var localTextures = textures.Where(t => Family(t.LogicalPath) == family.Key).ToArray();
+            var foundStandalone = false;
+            foreach (var atlas in standalone)
+                foundStandalone |= TryAdd(atlas, localSkeletons, localTextures, embedded: false);
+            if (foundStandalone) continue;
+
+            // The prefab can contain all three asset types. Prefer it over duplicate payloads
+            // also embedded in other bundles, and only accept a unique object per page.
+            foreach (var atlas in family.Except(standalone).OrderByDescending(a => a.LogicalPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)))
+                if (TryAdd(atlas, localSkeletons, localTextures, embedded: true)) break;
         }
         return result;
+
+        bool TryAdd(LibraryAsset atlas, LibraryAsset[] candidates, LibraryAsset[] pageCandidates, bool embedded)
+        {
+            token.ThrowIfCancellationRequested();
+            var sameBundle = candidates.Where(a => a.BundleId == atlas.BundleId).ToArray();
+            var separate = candidates.Where(a => a.LogicalPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var skeletonChoices = sameBundle.Length > 0 || embedded ? sameBundle : separate.Length > 0 ? separate : candidates;
+            if (skeletonChoices.Length != 1) return false;
+
+            var pageNames = LibraryPreview.AtlasPages(Encoding.UTF8.GetString(manager.Text(index, atlas)));
+            if (pageNames.Count == 0) return false;
+            var pages = new List<LibraryAsset>();
+            foreach (var name in pageNames)
+            {
+                var matches = pageCandidates.Where(a =>
+                    a.Asset.Name.Equals(Path.GetFileNameWithoutExtension(name), StringComparison.OrdinalIgnoreCase) &&
+                    (embedded ? a.BundleId == atlas.BundleId :
+                        Path.GetDirectoryName(a.LogicalPath)!.Equals(Path.GetDirectoryName(atlas.LogicalPath), StringComparison.OrdinalIgnoreCase)))
+                    .DistinctBy(a => (a.BundleId, a.Asset.FileIndex, a.Asset.PathId)).ToArray();
+                if (matches.Length != 1) return false;
+                pages.Add(matches[0]);
+            }
+
+            var match = paths.Match(atlas.LogicalPath);
+            var directory = Path.GetDirectoryName(match.Groups[2].Value)!.Replace('\\', '-').Replace('/', '-');
+            var label = (match.Groups[1].Value + "-" + directory).Replace("highend_hd", "高清", StringComparison.OrdinalIgnoreCase)
+                .Replace("sd", "低清", StringComparison.OrdinalIgnoreCase);
+            var variant = Path.Combine("模型", label, "model.config.json");
+            if (result.Any(v => v.Variant.Equals(variant, StringComparison.OrdinalIgnoreCase)))
+                variant = Path.Combine("模型", label + "-" + atlas.BundleId, "model.config.json");
+            var skeleton = skeletonChoices[0];
+            var skeletonFile = skeleton.Asset.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+                ? skeleton.Asset.Name : skeleton.Asset.Name + ".json";
+            var atlasFile = atlas.Asset.Name.EndsWith(".atlas", StringComparison.OrdinalIgnoreCase)
+                ? atlas.Asset.Name : atlas.Asset.Name + ".atlas";
+            result.Add(new(variant, skeletonFile, atlasFile, skeleton, atlas, pages));
+            return true;
+        }
     }
     sealed class ManagerScope:IDisposable
     {

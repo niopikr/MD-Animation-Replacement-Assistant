@@ -1,9 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
     <AssemblyName>MD动画替换助手</AssemblyName>
-    <Version>1.4.0</Version>
+    <Version>1.5.6</Version>
     <OutputType>WinExe</OutputType>
     <UseAppHost>true</UseAppHost>
   </PropertyGroup>
