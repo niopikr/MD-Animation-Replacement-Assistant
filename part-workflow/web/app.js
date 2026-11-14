@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 const $ = id => document.getElementById(id);
 const token = location.hash.slice(1) || sessionStorage.getItem('workflowToken');
 if (token) sessionStorage.setItem('workflowToken', token);
@@ -43,6 +43,7 @@ function setControls(){
   $('summonBrowseButton').disabled=busy;
   $('summonFolder').disabled=busy;
   $('summonPackButton').disabled=busy||libraryRunning;
+  $('summonConvert').disabled=busy||libraryRunning;
   $('effectSearch').disabled=busy;
   $('effectSelect').disabled=busy||$('effectSelect').options.length===1;
   $('effectExtractButton').disabled=busy||libraryRunning||!$('effectSelect').value;
@@ -182,7 +183,7 @@ async function exportPackage(final){
  if(!final){await window.openAnimationPreview(project.id,token);message(`已保存：${latestExport.folder}`);return;}
  try{message('正在渲染替换后尾帧并完成导出…');const image=await window.renderExportTailFrame(project.id,token,latestExport.relative);latestExport=await api(`/api/projects/${project.id}/export-tail`,{revision:latestExport.relative,image});}
  catch(e){throw Error('尾帧未能生成，导出尚未完成，请重试：'+e.message);}
- $('exportTitle').textContent='替换文件与尾帧已导出';$('exportSummary').textContent=`${latestExport.changes}个替换部件，${latestExport.bundleCount}个游戏文件，已同步${latestExport.companionCount}组低清。`;
+ $('exportTitle').textContent='替换文件与尾帧已导出';$('exportSummary').textContent=`${latestExport.changes} 个替换部件，${latestExport.bundleCount} 个游戏文件，另同步 ${latestExport.companionCount} 组画质。`;
  const install=await api('/api/settings');$('installTarget').textContent=install.gameRoot+'/LocalData/'+install.account;
  $('exportDialog').showModal();message(`已保存：${latestExport.folder}`);
 }
@@ -231,9 +232,30 @@ $('effectExtractButton').onclick=()=>action(async()=>{
   downloadZip(archive);
   message('效果素材 ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开效果 JSON。');
 });
+async function convertSummonForPack(request, show){
+  show('正在读取本机的 Rigby2D 导出文件…');
+  const source=await api('/api/rigby/conversion-source',request);
+  return new Promise((resolve,reject)=>{
+    const worker=new Worker('/rigby/summon-convert-worker.js',{type:'module'});
+    const fail=error=>{worker.terminate();reject(Error(error));};
+    worker.onmessage=({data})=>{
+      if(data.progress){show(data.progress);return;}
+      if(data.error){fail(data.error);return;}
+      worker.terminate();
+      resolve(data.result);
+    };
+    worker.onerror=()=>fail('无法启动本地 Rigby2D 转换。请重新打开助手页面后再试。');
+    worker.onmessageerror=()=>fail('无法读取本地转换结果。');
+    worker.postMessage(source);
+  }).then(result=>({
+    conversion:{sourceSha256:source.sourceSha256,atlasSha256:source.atlasSha256,skeleton:result.skeleton},
+    summary:`已校验 ${result.checkpoints} 个采样时刻，最大顶点误差 ${result.maxVertexError.toFixed(3)} 模型单位。`
+  }));
+}
 function bindTexturePack(prefix, route, folderHint, selection){
   const field=$(prefix+'Folder'), button=$(prefix+'PackButton');
   const link=$(prefix+'PackDownload'), status=$(prefix+'PackStatus');
+  const convert=prefix==='summon'?$('summonConvert'):null;
   const label=button.textContent;
   function show(text,error=false){
     status.textContent=text;
@@ -246,6 +268,7 @@ function bindTexturePack(prefix, route, folderHint, selection){
     show('');
   }
   field.oninput=clear;
+  if(convert)convert.onchange=clear;
   $(prefix+'BrowseButton').onclick=()=>action(async()=>{
     const result=await api(route+'/browse',{initialPath:field.value});
     if(result?.path){
@@ -266,13 +289,21 @@ function bindTexturePack(prefix, route, folderHint, selection){
       button.textContent='正在打包…';
       show('正在检查素材并生成替换文件，请稍候。');
       try{
-        const archive=await api(route+'/pack',{folder,...selection()});
+        const request={folder,...selection()};
+        let summary='';
+        if(convert?.checked){
+          const result=await convertSummonForPack(request,show);
+          request.conversion=result.conversion;
+          summary=result.summary;
+          show('转换校验通过，正在生成高清、低清及所用共享资源的替换文件…');
+        }
+        const archive=await api(route+'/pack',request);
         if(!archive?.blob)throw Error('未收到替换 ZIP，请重试。');
         link.href=URL.createObjectURL(archive.blob);
         link.download=archive.filename;
         link.hidden=false;
         const repairs=archive.repairs?`已恢复原版约束顺序：${archive.repairs}。`:'';
-        show(`已生成 ${archive.filename}。${repairs}如果下载未开始，请点击「下载替换 ZIP」。`);
+        show(`已生成 ${archive.filename}。${summary}${repairs}如果下载未开始，请点击「下载替换 ZIP」。`);
         link.click();
       }catch(e){
         const hint=e.message.startsWith('没有找到改动的 PNG')

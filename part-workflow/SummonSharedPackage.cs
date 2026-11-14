@@ -18,7 +18,7 @@ internal static class SummonSharedPackage
 
     internal static (FileStream Content, string FileName, List<string> Repairs) Pack(
         string workspace, GameSettings settings, CardChoice card, string variant, string source,
-        string skeletonFile, string atlas, string folder, SummonSourceMap? mapping)
+        string skeletonFile, string atlas, string folder, SummonSourceMap? mapping, SummonConversion? conversion)
     {
         var game = ProjectStore.Under(settings.GameRoot, $"LocalData/{settings.Account}");
         var sharedPath = ProjectStore.Under(game, $"0000/29/{BundleId}");
@@ -27,9 +27,8 @@ internal static class SummonSharedPackage
         var (originalSkeleton, originalAtlas) = ReadShared(sharedPath);
         if (mapping?.SourceBundle is { } bundle && bundle != BundleId)
             throw new InvalidDataException("召唤素材的来源与所选资源不匹配，请重新导出。");
-        var nested = Path.Combine(folder, "Rigby2D导出");
-        var input = File.Exists(Path.Combine(nested, atlas)) ? nested : folder;
-        var atlasPath = Path.Combine(input, atlas);
+        var (skeletonPath, atlasPath) = SummonPackage.InputFiles(folder, atlas, exactFolder: conversion is not null);
+        var input = Path.GetDirectoryName(atlasPath)!;
         var suppliedAtlas = File.Exists(atlasPath) ? File.ReadAllBytes(atlasPath) : null;
         var (localAtlas, localNormalized) = ReadLayout(source, atlas);
         var usesLocalLayout = suppliedAtlas is not null &&
@@ -39,9 +38,8 @@ internal static class SummonSharedPackage
             : null;
         var reference = shared?.Folder ?? source;
         var (referenceAtlas, normalized) = shared is null ? (localAtlas, localNormalized) : ReadLayout(reference, atlas);
-        var skeletonName = Path.ChangeExtension(atlas, ".json");
-        var skeletonPath = new[] { Path.Combine(nested, skeletonName), Path.Combine(folder, skeletonName) }.FirstOrDefault(File.Exists);
-        var inputSkeleton = skeletonPath is null ? null : File.ReadAllBytes(skeletonPath);
+        var inputSkeleton = SummonPackage.ApplyConversion(skeletonPath is null ? null : File.ReadAllBytes(skeletonPath),
+            suppliedAtlas, conversion);
         var skeletonChanged = inputSkeleton is not null && !inputSkeleton.AsSpan().SequenceEqual(originalSkeleton) &&
             !ProjectStore.HashBytes(inputSkeleton).Equals(
                 mapping?.SkeletonSha256 ?? ProjectStore.Hash(ProjectStore.Under(reference, shared is null ? skeletonFile : "P14409.json")),

@@ -1,4 +1,4 @@
-using CardAssetWorkbench;
+﻿using CardAssetWorkbench;
 
 namespace PartWorkflow;
 public sealed class LibraryUpdater(ProjectStore store,InstallSettings settings,int[]? testOnly=null)

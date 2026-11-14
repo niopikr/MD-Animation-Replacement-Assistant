@@ -57,7 +57,7 @@ app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["Cache-Control"] = "no-store";
-    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'";
     if (context.Request.Host.Host != "127.0.0.1") { context.Response.StatusCode = 403; return; }
     if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/files"))
     {
@@ -86,7 +86,7 @@ app.MapGet("/rigby/{**relative}", (string relative) =>
     return Path.GetExtension(file) == ".js" ? Results.File(file, "text/javascript; charset=utf-8") : Results.BadRequest();
 });
 app.MapGet("/style.css", () => Results.File(Path.Combine(web, "style.css"), "text/css; charset=utf-8"));
-app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.6" }));
+app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.7" }));
 app.MapGet("/api/bootstrap", () => { lock (store.Gate) return Results.Ok(new { Cards = store.Choices(), Projects = store.Recent(), SamAvailable = sam.ModelDirectory.Length > 0,Installation=settings.Info() }); });
 app.MapGet("/api/settings",()=>Results.Ok(settings.Info()));
 app.MapPost("/api/settings",(GameSettings value)=>{if(updater.Running)throw new InvalidOperationException("更新中不能切换游戏目录");settings.Save(value);return Results.Ok(settings.Info());});
@@ -130,6 +130,11 @@ app.MapPost("/api/rigby/browse", async (FolderPickerRequest? request) => Results
 {
     Path = await NativeDialogs.PickFolder("选择已编辑的召唤素材文件夹", request?.InitialPath)
 }));
+app.MapPost("/api/rigby/conversion-source", (SummonPackRequest request) =>
+{
+    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再转换。");
+    lock (store.Gate) return Results.Ok(SummonPackage.ReadConversionSource(store, request));
+});
 app.MapPost("/api/rigby/pack", (SummonPackRequest request, HttpContext context) =>
 {
     if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再打包。");
@@ -247,7 +252,7 @@ await app.StartAsync();
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single() + "/";
 JsonFile.Write(activeFile, new Dictionary<string, string> { ["Url"] = address, ["Token"] = token, ["Pid"] = Environment.ProcessId.ToString() });
 File.WriteAllText(Path.Combine(AppEnvironment.Runtime(workspace),"打开工作台.url"),"[InternetShortcut]\r\nURL="+address+"#"+token+"\r\n");
-Console.WriteLine("MD动画替换助手 1.5.6\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
+Console.WriteLine("MD动画替换助手 1.5.7\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
 if (!args.Contains("--no-browser")) TryOpenBrowser(address + "#" + token);
 await app.WaitForShutdownAsync();
 

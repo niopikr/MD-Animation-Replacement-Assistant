@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MD动画替换助手</title><link rel="stylesheet" href="/style.css"></head>
 <body>
-<header><div><strong>MD动画替换助手</strong><small>本地运行 · 动画素材编辑与回包</small></div><div class="row"><span id="saveState">1.5.6 独立版</span><button id="homeButton">项目列表</button><button id="quitButton">关闭工具</button></div></header>
+<header><div><strong>MD动画替换助手</strong><small>本地运行 · 动画素材编辑与回包</small></div><div class="row"><span id="saveState">1.5.7 独立版</span><button id="homeButton">项目列表</button><button id="quitButton">关闭工具</button></div></header>
 <div id="notice" role="status">正在读取本机素材库…</div>
 <main id="home">
   <section class="intro"><p class="eyebrow">从原动画部件开始</p><h1>选卡 → 圈选部件 → 对齐确认 → 导出</h1><p>首次使用先在下方选择游戏安装目录。然后选卡、上传立绘，按部件完成替换；可随时返回重做。</p></section>
@@ -14,11 +14,13 @@
     <button class="primary" id="createButton">创建部件替换项目</button>
     <p class="muted">项目会自动保存，可下次继续。</p>
     <button id="rigbyExportButton" disabled>导出 Rigby2D 文件</button>
-    <p class="muted">解压后在 Rigby2D 中打开 JSON。回包时选择导出时的卡片和画质。</p>
+    <p class="muted">解压后在 Rigby2D 中打开 JSON。请保留导出的召唤贴图映射。</p>
     <label>编辑完成的召唤素材文件夹<input id="summonFolder" placeholder="选择编辑后的素材目录"></label>
     <div class="row"><button id="summonBrowseButton">选择召唤文件夹</button><button id="summonPackButton" class="primary" disabled>打包召唤替换文件</button><a id="summonPackDownload" class="packDownload" hidden>下载替换 ZIP</a></div>
+    <label class="summon-conversion"><input id="summonConvert" type="checkbox">按 Rigby2D 效果转换</label>
+    <p class="muted">Rigby2D 预览和游戏动作有出入时勾选。选择同一次导出的 Spine 4.2 JSON 和 atlas 所在的文件夹。</p>
     <p id="summonPackStatus" class="packStatus" role="status" aria-live="polite"></p>
-    <p class="muted">选择编辑后的素材目录，可以回包骨架 JSON、atlas 和 PNG，也可以只回包骨架 JSON。请沿用原文件名并选择对应的卡片和画质。可按原版恢复的约束顺序会在打包时修正。</p>
+    <p class="muted">从映射识别素材来源，一次同步高清、低清及共享资源。遇到形变轨道绑定到另一画质时，两种画质会共用时间轴的骨架和材质。</p>
   </section>
   <section class="panel recent">
     <h2>卡片效果动画</h2>

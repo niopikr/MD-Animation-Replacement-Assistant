@@ -8,6 +8,13 @@ internal static class SummonSkeleton
 {
     private sealed record Constraint(string Kind, string Name, JsonObject Data, int Order);
 
+    internal static bool HasMeshDeform(byte[] bytes) =>
+        (Read(bytes)["animations"] as JsonObject ?? []).Select(animation => animation.Value).OfType<JsonObject>()
+            .Any(animation => animation["deform"] is JsonObject { Count: > 0 } ||
+                (animation["attachments"] as JsonObject ?? []).SelectMany(skin => (skin.Value as JsonObject ?? []))
+                .SelectMany(slot => (slot.Value as JsonObject ?? []))
+                .Any(attachment => attachment.Value?["deform"] is JsonArray { Count: > 0 }));
+
     internal static (byte[] Bytes, JsonObject Model, List<string> Repairs) Prepare(byte[] edited, byte[] original)
     {
         var model = Read(edited);

@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Path $taskResources -Force | Out-Null
 foreach ($name in 'web','classdata.tpk') { Move-Item -LiteralPath (Join-Path $taskTarget $name) -Destination $taskResources }
 Copy-Item -LiteralPath $EffectRuntime -Destination (Join-Path $taskResources 'effect-runtime') -Recurse
 $taskEffectRuntime = Join-Path $taskResources 'effect-runtime'
-foreach ($name in 'extract_effects.py','pack_shared_summon.py') {
+foreach ($name in 'extract_effects.py','pack_shared_summon.py','summon_dependencies.py','summon_bindings.py') {
     Copy-Item -LiteralPath (Join-Path $taskRoot "tools/$name") -Destination $taskEffectRuntime
 }
 $runtimeRoot = [IO.Path]::GetFullPath($taskEffectRuntime) + [IO.Path]::DirectorySeparatorChar
@@ -57,7 +57,7 @@ if (Test-Path -LiteralPath (Join-Path $taskRoot '数据/效果目录.json')) {
     Copy-Item -LiteralPath (Join-Path $taskRoot '数据/效果目录.json') -Destination (Join-Path $taskTarget '数据')
 }
 Copy-Item -LiteralPath (Join-Path $taskRoot '使用说明.md') -Destination $taskTarget
-'{"Format":"md-animation-helper-portable-v1","Version":"1.5.6","SeedCards":523}' | Set-Content -LiteralPath (Join-Path $taskTarget 'portable.json') -Encoding UTF8
+'{"Format":"md-animation-helper-portable-v1","Version":"1.5.7","SeedCards":523}' | Set-Content -LiteralPath (Join-Path $taskTarget 'portable.json') -Encoding UTF8
 foreach ($name in 'frames','ThirdParty','CardAssetExtractor.runtimeconfig.json','onnxruntime_providers_shared.lib','onnxruntime.lib','web.config') {
     $taskExtra = [IO.Path]::GetFullPath((Join-Path $taskTarget $name))
     if (!$taskExtra.StartsWith($taskTarget + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw '清理路径越界' }

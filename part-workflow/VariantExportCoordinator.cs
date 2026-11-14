@@ -11,17 +11,84 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
 {
     public object Export(ProjectState source)
     {
+        var card = store.Choices().Single(c => c.Id == source.CardId);
+        var settings = new InstallSettings(store.Workspace).Read();
+        var work = Path.Combine(AppEnvironment.Runtime(store.Workspace), $"summon-project-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(work);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(settings.GameRoot) && !string.IsNullOrWhiteSpace(settings.Account))
+            {
+                var dependencies = SummonDependencies.Read(store.Workspace, settings, source.CardId, source.Variant, work);
+                if (dependencies.Models.Length > 0)
+                    return ExportReferenced(source, card, settings, dependencies, work);
+            }
+            return ExportCatalogVariants(source, card);
+        }
+        finally { Directory.Delete(work, recursive: true); }
+    }
+
+    private object ExportReferenced(ProjectState source, CardChoice card, GameSettings settings, SummonDependencies dependencies, string work)
+    {
+        var primary = JsonSerializer.SerializeToNode(preview.Export(source, true, gamePackage: true))!;
+        var folder = primary["Folder"]!.GetValue<string>();
+        var sourceFolder = Path.Combine(store.DirectoryFor(source.Id), "source");
+        var model = Path.Combine(folder, "动画模型");
+        var atlas = Atlas.Parse(File.ReadAllText(ProjectStore.Under(model, source.AtlasFile)));
+        var originalAtlas = Atlas.Parse(File.ReadAllText(ProjectStore.Under(sourceFolder, source.AtlasFile)));
+        var pngHashes = originalAtlas.Pages.Keys.ToDictionary(name => name, name => source.SourceHashes[name]);
+        var map = new SummonSourceMap(SummonPackage.MapFormat, card.Id, source.Variant,
+            source.SourceHashes[source.AtlasFile], source.SourceHashes[source.SkeletonFile], pngHashes);
+        var atlasName = Path.GetFileNameWithoutExtension(source.AtlasFile);
+        var edited = Path.Combine(work, "project");
+        Directory.CreateDirectory(edited);
+        File.Copy(ProjectStore.Under(model, source.SkeletonFile), Path.Combine(edited, atlasName + ".json"));
+        File.Copy(ProjectStore.Under(model, source.AtlasFile), Path.Combine(edited, atlasName + ".atlas"));
+        foreach (var page in atlas.Pages.Keys)
+            File.Copy(ProjectStore.Under(model, page), ProjectStore.Under(edited, page));
+
+        var (hashes, edits, _) = SummonPackage.Prepare(store, settings, card, source.Variant, source.SourceVersion,
+            sourceFolder, source.SkeletonFile, source.AtlasFile, edited, map, work, dependencies);
+        var files = new List<object>();
+        using (var stream = SummonPackage.PackBundles(work, settings, hashes, hashes.Keys, edits))
+        using (var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read))
+        {
+            foreach (var id in hashes.Keys)
+            {
+                var relative = $"0000/{id[..2]}/{id}";
+                var replacement = Extract("替换", "替换文件");
+                var backup = Extract("原始", "原文件备份");
+                files.Add(new { File = relative, Target = SummonPackage.GameBundlePath(settings, id),
+                    OriginalSha256 = hashes[id], ReplacementSha256 = ProjectStore.Hash(replacement),
+                    Backup = Path.GetRelativePath(folder, backup), Replacement = Path.GetRelativePath(folder, replacement) });
+                string Extract(string entry, string directory)
+                {
+                    var destination = ProjectStore.Under(folder, directory + "/" + relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    using var input = zip.GetEntry(entry + "/" + relative)!.Open();
+                    using var output = File.Create(destination);
+                    input.CopyTo(output);
+                    return destination;
+                }
+            }
+        }
+        var companions = SummonDependencies.Companions(card, source.Variant).Select(SummonDependencies.Label).ToArray();
+        JsonFile.Write(Path.Combine(folder, "替换清单.json"), new { Version = 2, card.Id, card.Name, source.Variant,
+            Files = files, CompanionVariants = companions, Verified = true });
+        File.WriteAllText(Path.Combine(folder, "跨画质导出完成标记.txt"), "已验证召唤替换文件。");
+        return new { Folder = folder, Relative = primary["Relative"]!.GetValue<string>(), Config = primary["Config"]!.GetValue<string>(),
+            Changes = primary["Changes"]!.GetValue<int>(), BundleCount = files.Count, CompanionCount = companions.Length };
+    }
+
+    private object ExportCatalogVariants(ProjectState source, CardChoice card)
+    {
         var primary=JsonSerializer.SerializeToNode(new GameReplacementExporter(store,preview).Export(source,compatible:true))!;
         var folder=primary["Folder"]!.GetValue<string>();var reportPath=Path.Combine(folder,"替换清单.json");
         var report=JsonNode.Parse(File.ReadAllText(reportPath))!;var files=report["Files"]!.AsArray();
         var models=new List<object>();var notes=new List<string>();
         try
         {
-            var selectedLabel=Path.GetFileName(Path.GetDirectoryName(source.Variant))!;
-            var region=selectedLabel.Split('-')[0];
-            var sourceManifest=JsonNode.Parse(File.ReadAllText(Path.Combine(source.SourceVersion,"manifest.json")))!;
-            var companions=sourceManifest["Preview"]!["Configurations"]!.AsArray().Select(c=>c!.GetValue<string>())
-                .Where(v=>v!=source.Variant&&Path.GetFileName(Path.GetDirectoryName(v))!.StartsWith(region+"-低清-",StringComparison.Ordinal)).ToArray();
+            var companions=SummonDependencies.Companions(card,source.Variant).ToArray();
             foreach(var variant in companions)
             {
                 var label=Path.GetFileName(Path.GetDirectoryName(variant))!;
@@ -59,7 +126,7 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
                     childStore.Confirm(child,targetPart,new(Convert.ToBase64String(bytes.ToArray()),placement));
                 }
                 foreach(var changed in source.Parts.Where(p=>p.Status is "replaced" or "empty"))
-                    if(!child.Parts.Any(p=>p.Name==changed.Name&&p.Slot==changed.Slot))throw new InvalidDataException("低清版本没有对应部件："+changed.Name);
+                    if(!child.Parts.Any(p=>p.Name==changed.Name&&p.Slot==changed.Slot))throw new InvalidDataException(label+"没有对应部件："+changed.Name);
                 var childResult=JsonSerializer.SerializeToNode(new GameReplacementExporter(childStore,new Exporter(childStore)).Export(child,compatible:true))!;
                 var childFolder=childResult["Folder"]!.GetValue<string>();
                 var childReport=JsonNode.Parse(File.ReadAllText(Path.Combine(childFolder,"替换清单.json")))!;
@@ -83,10 +150,10 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
             JsonFile.Write(Path.Combine(folder,"跨画质导出.json"),new{PrimaryVariant=source.Variant,Models=models,Verified=true});
             if(notes.Count>0)
             {
-                var text="\r\n本包已同步包含低清演出资源："+string.Join("、",notes)+"。请把替换文件目录内全部文件一起覆盖，不要仅挑高清文件。原有确认进度没有改变。\r\n";
+                var text="\r\n本包已同步其他画质："+string.Join("、",notes)+"。请把替换文件目录内全部文件一起覆盖。\r\n";
                 File.AppendAllText(Path.Combine(folder,"替换说明.txt"),text);File.AppendAllText(Path.Combine(folder,"先看这里.txt"),text);
             }
-            File.WriteAllText(Path.Combine(folder,"跨画质导出完成标记.txt"),"主版本和低清版本均已生成并验证。\r\n");
+            File.WriteAllText(Path.Combine(folder,"跨画质导出完成标记.txt"),"所有目标画质的替换文件均已生成并验证。\r\n");
             return new{Folder=folder,Relative=primary["Relative"]!.GetValue<string>(),Config=primary["Config"]!.GetValue<string>(),Changes=primary["Changes"]!.GetValue<int>(),BundleCount=files.Count,CompanionCount=notes.Count,Companions=notes,IsFinal=true};
         }
         catch(Exception ex){File.Delete(Path.Combine(folder,"替换文件完成标记.txt"));File.WriteAllText(Path.Combine(folder,"跨画质导出未完成.txt"),ex.Message);throw;}
