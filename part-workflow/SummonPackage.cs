@@ -149,14 +149,14 @@ internal static class SummonPackage
             }
             var label = SummonDependencies.Region(variant).Replace('/', '-');
             var name = BulkLibrary.SafeComponent($"{card.Id}-{card.Name}-{label}-召唤替换") + ".zip";
-            var (originals, edits, repairs) = Prepare(store, settings, card, variant, version, source, skeleton, atlas, folder, map, work,
+            var (bundleIds, edits, repairs) = Prepare(store, settings, card, variant, version, source, skeleton, atlas, folder, map, work,
                 dependencies, synchronizeInput: true, conversion: request.Conversion);
-            return (PackBundles(work, settings, originals, originals.Keys, edits), name, repairs);
+            return (PackBundles(work, settings, bundleIds, edits), name, repairs);
         }
         finally { Directory.Delete(work, recursive: true); }
     }
 
-    internal static (Dictionary<string, string> Originals, List<GameReplacementExporter.Edit> Edits, List<string> Repairs) Prepare(
+    internal static (HashSet<string> BundleIds, List<GameReplacementExporter.Edit> Edits, List<string> Repairs) Prepare(
         ProjectStore store, GameSettings settings, CardChoice card, string variant, string version, string source,
         string skeleton, string atlas, string folder, SummonSourceMap? map, string work,
         SummonDependencies? resolved = null, bool synchronizeInput = false, SummonConversion? conversion = null)
@@ -197,8 +197,7 @@ internal static class SummonPackage
                 images.Add(name, image);
                 suppliedPages.Add(name);
             }
-            else if (sameLayout && pageHashes.TryGetValue(name, out var hash) &&
-                (map?.Pages?.GetValueOrDefault(name) is not { } expected || hash.Equals(expected, StringComparison.OrdinalIgnoreCase)))
+            else if (sameLayout && pageHashes.ContainsKey(name))
                 images.Add(name, ProjectStore.Under(source, name));
         }
         textureChanged |= changedPages.Count > 0;
@@ -237,14 +236,9 @@ internal static class SummonPackage
                 dependencies.Models.Where(model => model.Animations.Length > 0)
                     .Select(model => File.ReadAllBytes(Path.Combine(work, model.SkeletonFile)));
             if (relevant.Any(SummonSkeleton.HasMeshDeform))
-            {
-                var linked = SummonDependencies.Read(store.Workspace, settings, card.Id, variant, work, shareBindings: true);
-                if (linked.Hashes.Any(entry => dependencies.Hashes.TryGetValue(entry.Key, out var prior) && prior != entry.Value))
-                    throw new IOException("游戏召唤资源在分析期间发生变化，请重新打包。");
-                dependencies = linked;
-            }
+                dependencies = SummonDependencies.Read(store.Workspace, settings, card.Id, variant, work, shareBindings: true);
         }
-        var originals = dependencies.Hashes;
+        var bundleIds = dependencies.BundleIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var targets = dependencies.Models.ToList();
         if (targets.Count == 0)
         {
@@ -252,7 +246,7 @@ internal static class SummonPackage
             {
                 var other = choice == variant ? (Version: version, Source: source, SkeletonFile: skeleton, AtlasFile: atlas)
                     : OpenCompanion(store, card.Id, choice);
-                targets.Add(CatalogTarget(other.Version, other.Source, other.SkeletonFile, other.AtlasFile, choice, originals));
+                targets.Add(CatalogTarget(other.Version, other.Source, other.SkeletonFile, other.AtlasFile, choice, bundleIds));
             }
         }
         else
@@ -291,7 +285,7 @@ internal static class SummonPackage
             if (!bytes.AsSpan().SequenceEqual(targetSkeleton))
                 AddEdit(edits, new(target.Skeleton, null, bytes));
         }
-        return (originals, edits.Values.ToList(), repairs.Distinct().ToList());
+        return (bundleIds, edits.Values.ToList(), repairs.Distinct().ToList());
     }
 
     private static (string Version, string Source, string SkeletonFile, string AtlasFile) OpenCompanion(ProjectStore store, int card, string variant)
@@ -301,7 +295,7 @@ internal static class SummonPackage
     }
 
     private static SummonTarget CatalogTarget(string version, string source, string skeleton, string atlas, string variant,
-        Dictionary<string, string> hashes)
+        HashSet<string> bundleIds)
     {
         var manifest = JsonNode.Parse(File.ReadAllText(Path.Combine(version, "manifest.json")))!;
         var assets = manifest["Assets"]!.Deserialize<LibraryAsset[]>()!;
@@ -317,14 +311,7 @@ internal static class SummonPackage
             assets.Single(a => a.Asset.Type == "Texture2D" && a.Asset.Name == Path.GetFileNameWithoutExtension(name) &&
                 Path.GetDirectoryName(a.LogicalPath) == Path.GetDirectoryName(atlasAsset.LogicalPath) &&
                 a.Sha256 == ProjectStore.Hash(ProjectStore.Under(source, name)))).ToArray();
-        var originals = manifest["OriginalFiles"]!.Deserialize<SourceDigest[]>()!.ToDictionary(x => x.BundleId, x => x.Sha256);
-        foreach (var resource in pages.Prepend(atlasAsset).Prepend(skeletonAsset))
-        {
-            var hash = originals[resource.BundleId];
-            if (hashes.TryGetValue(resource.BundleId, out var existing) && hash != existing)
-                throw new InvalidDataException("两个画质的资源快照不同，请重新提取。");
-            hashes[resource.BundleId] = hash;
-        }
+        bundleIds.UnionWith(pages.Prepend(atlasAsset).Prepend(skeletonAsset).Select(resource => resource.BundleId));
         return new(Locate(skeletonAsset), Locate(atlasAsset), pages.Select(Locate).ToArray(), skeletonPath, atlasPath,
             pageNames.Select(name => RigbyExport.TextureSize(ProjectStore.Under(source, name)))
                 .Select(size => new[] { size.Width, size.Height }).ToArray(), [SummonDependencies.Quality(variant)], []);
@@ -376,21 +363,10 @@ internal static class SummonPackage
         return Encoding.UTF8.GetBytes(text.ToString());
     }
 
-    internal static FileStream PackCurrentCopies(string work, GameSettings settings, string[] ids, string knownId, string knownHash)
-    {
-        var hashes = ids.ToDictionary(id => id, id =>
-        {
-            var live = GameBundlePath(settings, id);
-            if (!File.Exists(live)) throw new FileNotFoundException("当前账号缺少召唤动画文件：" + id);
-            return id == knownId ? knownHash : ProjectStore.Hash(live);
-        });
-        return PackBundles(work, settings, hashes, ids, []);
-    }
-
     internal static string GameBundlePath(GameSettings settings, string id) =>
         ProjectStore.Under(settings.GameRoot, $"LocalData/{settings.Account}/0000/{id[..2]}/{id}");
 
-    internal static FileStream PackBundles(string work, GameSettings settings, Dictionary<string, string> originals,
+    internal static FileStream PackBundles(string work, GameSettings settings,
         IEnumerable<string> bundleIds, List<GameReplacementExporter.Edit> edits)
     {
         var stream = new FileStream(work + ".zip", FileMode.CreateNew, FileAccess.ReadWrite,
@@ -402,17 +378,13 @@ internal static class SummonPackage
                 var byBundle = edits.ToLookup(edit => edit.Asset.BundleId);
                 foreach (var id in bundleIds.Concat(byBundle.Select(group => group.Key)).Distinct())
                 {
-                    if (id.Length != 8 || id.Any(c => !Uri.IsHexDigit(c)) || !originals.TryGetValue(id, out var hash))
+                    if (id.Length != 8 || id.Any(c => !Uri.IsHexDigit(c)))
                         throw new InvalidDataException("召唤资源的 Bundle 定位无效。");
                     var relative = $"0000/{id[..2]}/{id}";
                     var live = GameBundlePath(settings, id);
                     if (!File.Exists(live)) throw new FileNotFoundException("当前账号缺少召唤动画文件：" + relative);
-                    var backup = Path.Combine(work, id + ".original");
-                    File.Copy(live, backup);
-                    if (ProjectStore.Hash(backup) != hash)
-                        throw new InvalidDataException("游戏原文件已变化，请重新提取后再回包：" + relative);
                     var bindings = Path.Combine(work, id + ".bindings");
-                    var replacement = File.Exists(bindings) ? bindings : backup;
+                    var replacement = File.Exists(bindings) ? bindings : live;
                     if (byBundle.Contains(id))
                     {
                         var edited = Path.Combine(work, id + ".replacement");
@@ -420,9 +392,6 @@ internal static class SummonPackage
                         replacement = edited;
                         GameReplacementExporter.Rewrite(replacement, byBundle[id].ToArray());
                     }
-                    if (ProjectStore.Hash(live) != hash)
-                        throw new IOException("打包期间游戏文件发生变化，请重试。");
-                    zip.CreateEntryFromFile(backup, "原始/" + relative, CompressionLevel.NoCompression);
                     zip.CreateEntryFromFile(replacement, "替换/" + relative, CompressionLevel.NoCompression);
                 }
             }

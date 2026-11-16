@@ -61,7 +61,7 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
             .Where(p => Path.GetDirectoryName(Path.GetDirectoryName(p)) == Root)
             .Select(p => { try { return JsonFile.Read<ProjectState>(p); } catch { return null; } })
             .Where(p => p is not null).OrderByDescending(p => p!.UpdatedUtc)
-            .Select(p => new { p!.Id, p.CardId, p.ChineseName, p.UpdatedUtc, Completed = p.Parts.Count(x => x.Status != "pending"), Total = p.Parts.Count });
+        .Select(p => new { p!.Id, p.CardId, p.ChineseName, p.IsEffect, p.UpdatedUtc, Completed = p.Parts.Count(x => x.Status != "pending"), Total = p.Parts.Count });
     }
     internal (CardChoice Card, string Variant, string Version, string ConfigPath, string Source, string SkeletonFile, string AtlasFile) OpenModel(NewProjectRequest request)
     {
@@ -81,15 +81,30 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
     public ProjectState Create(NewProjectRequest request)
     {
         var (card, variant, version, configPath, source, skeletonFile, atlasFile) = OpenModel(request);
+        return CreateParts(card.Id, card.Name, variant, version, source, skeletonFile, atlasFile, Path.GetFileName(configPath), false);
+    }
+
+    internal ProjectState CreateEffect(EffectMap map, string source, string model)
+    {
+        var variant = model == "贴图一览.json" ? "卡片效果 · 整页贴图" :
+            model.StartsWith("原Spine-highend_hd-") ? "卡片效果 · 原生 Spine 高清" :
+            model.StartsWith("原Spine-sd-") ? "卡片效果 · 原生 Spine 低清" :
+            model.StartsWith("原Spine-") ? "卡片效果 · 原生 Spine" : "卡片效果 · " + Path.GetFileNameWithoutExtension(model);
+        return CreateParts(map.CardId, map.Name, variant, "", source, model, Path.ChangeExtension(model, ".atlas"), EffectPackage.MapName, true);
+    }
+
+    private ProjectState CreateParts(int cardId, string cardName, string variant, string version,
+        string source, string skeletonFile, string atlasFile, string extraFile, bool isEffect)
+    {
         var skeleton = JsonNode.Parse(File.ReadAllText(Under(source, skeletonFile)))!;
         var spine = skeleton["skeleton"]?["spine"]?.GetValue<string>() ?? "未知";
         if (!spine.StartsWith("4.2.")) throw new InvalidDataException($"当前版本验证范围为 Spine 4.2，所选为 {spine}");
         var atlas = Atlas.Parse(File.ReadAllText(Under(source, atlasFile)));
         var state = new ProjectState
         {
-            Id = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + card.Id + "-" + Guid.NewGuid().ToString("N")[..6],
-            CardId = card.Id, ChineseName = card.Name, SourceVersion = version, Variant = variant,
-            SkeletonFile = skeletonFile, AtlasFile = atlasFile, SpineVersion = spine
+            Id = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + cardId + "-" + Guid.NewGuid().ToString("N")[..6],
+            CardId = cardId, ChineseName = cardName, SourceVersion = version, Variant = variant,
+            SkeletonFile = skeletonFile, AtlasFile = atlasFile, SpineVersion = spine, IsEffect = isEffect
         };
         var root = DirectoryFor(state.Id);
         Directory.CreateDirectory(root);
@@ -97,7 +112,7 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
         {
             var snapshot = Path.Combine(root, "source");
             Directory.CreateDirectory(snapshot);
-            foreach (var name in atlas.Pages.Keys.Concat([skeletonFile, atlasFile, Path.GetFileName(configPath)]).Distinct())
+            foreach (var name in atlas.Pages.Keys.Concat([skeletonFile, atlasFile, extraFile]).Distinct())
             {
                 var input = Under(source, name);
                 var destination = Under(snapshot, name);
@@ -116,6 +131,7 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
             string[] preferred = ["Head", "HeadHairA", "HeadHairB", "HeadParts", "Eye_0", "Eye_1", "Hair", "LeftUpperArm", "RightArm", "LeftArm"];
             var ordered = attachments.OrderBy(a => Array.IndexOf(preferred, a.Name) is var i && i >= 0 ? i : 999).ThenBy(a => a.Name, StringComparer.Ordinal);
             var regionKeys = new HashSet<string>();
+            var textureSizes = new Dictionary<string, (int Width, int Height)>();
             foreach (var a in ordered)
             {
                 var data = (JsonObject)a.Data.DeepClone();
@@ -127,7 +143,8 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
                     data["triangles"] = parent.Data["triangles"]!.DeepClone();
                 }
                 var part = atlas.MakePart(state.Parts.Count + 1, a.Slot, a.Name, data);
-                var textureSize = Image.Identify(Under(snapshot, part.Page));
+                if (!textureSizes.TryGetValue(part.Page, out var textureSize))
+                    textureSizes[part.Page] = textureSize = RigbyExport.TextureSize(Under(snapshot, part.Page));
                 atlas.FitToTexture(part, textureSize.Width, textureSize.Height);
                 var key = part.Page + ":" + string.Join(',', part.Bounds) + ":" + string.Join(',', part.Offsets);
                 if (!regionKeys.Add(key)) continue; // Shared image / linked meshes only require one replacement.
@@ -165,11 +182,70 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
     public void SetArtwork(ProjectState p, Stream input)
     {
         if (p.Artwork.Length > 0) throw new InvalidOperationException("每个项目固定一张立绘；更换立绘请新建项目，以保留部件对应关系");
-        using var art = Image.Load<Rgba32>(input);
-        if ((long)art.Width * art.Height > 40_000_000) throw new InvalidDataException("图片过大，请缩小到 4000 万像素以内");
+        using var art = LoadArtwork(input);
         p.Artwork = "artwork.png";
-        art.SaveAsPng(Path.Combine(DirectoryFor(p.Id), p.Artwork));
+        JsonFile.Png(Under(DirectoryFor(p.Id), p.Artwork), art);
         Save(p);
+    }
+    private static Image<Rgba32> LoadArtwork(Stream input)
+    {
+        var info = Image.Identify(input);
+        if ((long)info.Width * info.Height > 40_000_000)
+            throw new InvalidDataException("图片过大，请缩小到 4000 万像素以内");
+        input.Position = 0;
+        return Image.Load<Rgba32>(input);
+    }
+    public string ArtworkPath(ProjectState p, Part? part)
+    {
+        var source = part is { DraftSource.Length: > 0 } ? part.DraftSource : p.Artwork;
+        if (source.Length == 0) throw new InvalidOperationException("请先导入整张立绘或当前部件的图片");
+        return Under(DirectoryFor(p.Id), source);
+    }
+    public Part SetPartArtwork(ProjectState p, Part part, Stream input, string? name)
+    {
+        using var art = LoadArtwork(input);
+        var placement = WholeImagePlacement(p, part, art);
+        var source = $"draft/{part.Key}/images/{Guid.NewGuid():N}.png";
+        JsonFile.Png(Under(DirectoryFor(p.Id), source), art);
+        part.DraftSource = source;
+        part.DraftSourceName = Path.GetFileName(name) ?? "";
+        return SaveWholeImage(p, part, placement);
+    }
+    public Part UseWholePartImage(ProjectState p, Part part)
+    {
+        if (part.DraftSource.Length == 0) throw new InvalidOperationException("请先导入当前部件的图片");
+        using var art = Image.Load<Rgba32>(ArtworkPath(p, part));
+        return SaveWholeImage(p, part, WholeImagePlacement(p, part, art));
+    }
+    private Part SaveWholeImage(ProjectState p, Part part, Placement placement)
+    {
+        part.DraftCutout = part.DraftSource;
+        part.DraftMask = "";
+        part.Placement = placement;
+        Save(p);
+        return part;
+    }
+    private Placement WholeImagePlacement(ProjectState p, Part part, Image<Rgba32> image)
+    {
+        // Use the main image for initial alignment, even if the export has faint alpha at the canvas edges.
+        var visible = FindVisibleBounds(image, 32);
+        if (visible.IsEmpty) visible = FindVisibleBounds(image, 8);
+        if (visible.IsEmpty) throw new InvalidDataException("图片没有可用的可见像素，可使用「替换为空素材」");
+        if (image.Width == part.Width && image.Height == part.Height)
+            return new Placement { Width = image.Width, Height = image.Height, X = image.Width / 2d, Y = image.Height / 2d };
+        return FitToReference(p, part, image.Size, visible);
+    }
+    public Part UseProjectArtwork(ProjectState p, Part part)
+    {
+        if (p.Artwork.Length == 0) throw new InvalidOperationException("请先导入整张立绘");
+        ClearDraft(part);
+        part.Placement = new Placement();
+        Save(p);
+        return part;
+    }
+    private static void ClearDraft(Part part)
+    {
+        part.DraftSource = part.DraftSourceName = part.DraftMask = part.DraftCutout = "";
     }
     public static Image<Rgba32> DecodePng(string base64)
     {
@@ -180,9 +256,9 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
     public object SaveSelection(ProjectState p, Part part, string base64)
     {
         var root = DirectoryFor(p.Id);
-        using var art = Image.Load<Rgba32>(Path.Combine(root, p.Artwork));
+        using var art = Image.Load<Rgba32>(ArtworkPath(p, part));
         using var mask = DecodePng(base64);
-        if (art.Size != mask.Size) throw new InvalidDataException("选区尺寸与立绘不一致");
+        if (art.Size != mask.Size) throw new InvalidDataException("选区尺寸与当前源图不一致");
         var left = art.Width; var top = art.Height; var right = -1; var bottom = -1;
         for (var y = 0; y < art.Height; y++) for (var x = 0; x < art.Width; x++)
         {
@@ -197,20 +273,30 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
         JsonFile.Png(Under(root, part.DraftMask), mask);
         art.Mutate(x => x.Crop(new Rectangle(left, top, right - left + 1, bottom - top + 1)));
         JsonFile.Png(Under(root, part.DraftCutout), art);
-        using var reference = Image.Load<Rgba32>(Path.Combine(root, "templates", part.Key, "reference.png"));
-        var box = VisibleBounds(reference);
-        var scale = Math.Min((double)box.Width / art.Width, (double)box.Height / art.Height);
-        part.Placement = new Placement { Width = art.Width * scale, Height = art.Height * scale,
-            X = box.X + box.Width / 2d, Y = box.Y + box.Height / 2d };
+        part.Placement = FitToReference(p, part, art.Size, new Rectangle(0, 0, art.Width, art.Height));
         Save(p);
         return new { Part = part, Crop = new { Left = left, Top = top, Width = art.Width, Height = art.Height } };
     }
+    private Placement FitToReference(ProjectState p, Part part, Size size, Rectangle visible)
+    {
+        using var reference = Image.Load<Rgba32>(Under(DirectoryFor(p.Id), $"templates/{part.Key}/reference.png"));
+        var box = VisibleBounds(reference);
+        var scale = Math.Min((double)box.Width / visible.Width, (double)box.Height / visible.Height);
+        return new Placement { Width = size.Width * scale, Height = size.Height * scale,
+            X = box.X + box.Width / 2d + (size.Width / 2d - visible.X - visible.Width / 2d) * scale,
+            Y = box.Y + box.Height / 2d + (size.Height / 2d - visible.Y - visible.Height / 2d) * scale };
+    }
     public static Rectangle VisibleBounds(Image<Rgba32> image)
     {
+        var bounds = FindVisibleBounds(image, 8);
+        return bounds.IsEmpty ? new Rectangle(0, 0, image.Width, image.Height) : bounds;
+    }
+    private static Rectangle FindVisibleBounds(Image<Rgba32> image, byte alphaThreshold)
+    {
         int l = image.Width, t = image.Height, r = -1, b = -1;
-        for (var y = 0; y < image.Height; y++) for (var x = 0; x < image.Width; x++) if (image[x, y].A > 8)
+        for (var y = 0; y < image.Height; y++) for (var x = 0; x < image.Width; x++) if (image[x, y].A > alphaThreshold)
             { l = Math.Min(l, x); t = Math.Min(t, y); r = Math.Max(r, x); b = Math.Max(b, y); }
-        return r >= l ? new Rectangle(l, t, r - l + 1, b - t + 1) : new Rectangle(0, 0, image.Width, image.Height);
+        return r >= l ? new Rectangle(l, t, r - l + 1, b - t + 1) : Rectangle.Empty;
     }
     public void KeepPending(ProjectState p)
     {
@@ -237,7 +323,7 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
             using var blank = new Image<Rgba32>(part.Width, part.Height);
             blank.SaveAsPng(Path.Combine(folder, "aligned.png"));
             revision.Aligned = rel + "/aligned.png";
-            part.DraftMask = ""; part.DraftCutout = "";
+            ClearDraft(part);
         }
         else if (request is not null)
         {
@@ -250,9 +336,14 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
                 if (mesh[x, y].A != 0 && aligned[x, y].A > 8) visible++;
             if (visible == 0) throw new InvalidDataException("新部件没有落在原网格内，请调整位置和尺寸");
             aligned.SaveAsPng(Path.Combine(folder, "aligned.png"));
-            File.Copy(Under(root, part.DraftMask), Path.Combine(folder, "mask.png"));
+            if (part.DraftMask.Length != 0)
+            {
+                File.Copy(Under(root, part.DraftMask), Path.Combine(folder, "mask.png"));
+                revision.Mask = rel + "/mask.png";
+            }
             File.Copy(Under(root, part.DraftCutout), Path.Combine(folder, "cutout.png"));
-            revision.Mask = rel + "/mask.png"; revision.Cutout = rel + "/cutout.png"; revision.Aligned = rel + "/aligned.png";
+            revision.Source = part.DraftSource; revision.SourceName = part.DraftSourceName;
+            revision.Cutout = rel + "/cutout.png"; revision.Aligned = rel + "/aligned.png";
             part.Placement = request.Placement;
         }
         JsonFile.Write(Path.Combine(folder, "revision.json"), revision);
@@ -268,12 +359,17 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
         var root = DirectoryFor(p.Id);
         var revision = JsonFile.Read<Revision>(Under(root, revisionPath));
         part.Status = revision.Kind; part.ConfirmedRevision = revisionPath; part.Placement = revision.Placement;
-        if (revision.Kind == "empty") { part.DraftMask = ""; part.DraftCutout = ""; }
+        ClearDraft(part);
         if (revision.Kind == "replaced")
         {
             var draft = Under(root, "draft/" + part.Key); Directory.CreateDirectory(draft);
-            part.DraftMask = $"draft/{part.Key}/mask.png"; part.DraftCutout = $"draft/{part.Key}/cutout.png";
-            File.Copy(Under(root, revision.Mask), Under(root, part.DraftMask), true);
+            part.DraftSource = revision.Source; part.DraftSourceName = revision.SourceName;
+            if (revision.Mask.Length != 0)
+            {
+                part.DraftMask = $"draft/{part.Key}/mask.png";
+                File.Copy(Under(root, revision.Mask), Under(root, part.DraftMask), true);
+            }
+            part.DraftCutout = $"draft/{part.Key}/cutout.png";
             File.Copy(Under(root, revision.Cutout), Under(root, part.DraftCutout), true);
         }
         Save(p);

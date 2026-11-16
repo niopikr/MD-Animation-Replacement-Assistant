@@ -86,7 +86,7 @@ app.MapGet("/rigby/{**relative}", (string relative) =>
     return Path.GetExtension(file) == ".js" ? Results.File(file, "text/javascript; charset=utf-8") : Results.BadRequest();
 });
 app.MapGet("/style.css", () => Results.File(Path.Combine(web, "style.css"), "text/css; charset=utf-8"));
-app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.7" }));
+app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.8" }));
 app.MapGet("/api/bootstrap", () => { lock (store.Gate) return Results.Ok(new { Cards = store.Choices(), Projects = store.Recent(), SamAvailable = sam.ModelDirectory.Length > 0,Installation=settings.Info() }); });
 app.MapGet("/api/settings",()=>Results.Ok(settings.Info()));
 app.MapPost("/api/settings",(GameSettings value)=>{if(updater.Running)throw new InvalidOperationException("更新中不能切换游戏目录");settings.Save(value);return Results.Ok(settings.Info());});
@@ -109,9 +109,16 @@ app.MapPost("/api/effects/browse", async (FolderPickerRequest? request) => Resul
 {
     Path = await NativeDialogs.PickFolder("选择含有效果贴图映射.json的素材目录", request?.InitialPath)
 }));
+app.MapPost("/api/effects/projects", async (EffectProjectRequest request, HttpContext context) =>
+{
+    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再创建项目。");
+    return Results.Ok(await EffectProjects.Open(store, settings.Read(), request, context.RequestAborted));
+});
+app.MapPost("/api/effects/conversion-source", (EffectFolderRequest request) => Results.Ok(EffectSpine.ReadSource(request)));
 app.MapPost("/api/effects/pack", (EffectFolderRequest request, HttpContext context) =>
 {
-    var (content, fileName) = EffectPackage.Pack(workspace, settings.Read(), request.Folder, request.CardId);
+    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再打包。");
+    var (content, fileName) = EffectPackage.Pack(workspace, settings.Read(), request.Folder, request.CardId, request.Conversion);
     context.Response.Headers["X-Workflow-Filename"] = Uri.EscapeDataString(fileName);
     return Results.File(content, "application/zip");
 });
@@ -168,6 +175,25 @@ app.MapPost("/api/projects/{id}/step", (string id, StepRequest request) =>
 {
     lock (store.Gate) { var p = store.Load(id); p.CurrentPart = Math.Clamp(request.Number, 0, p.Parts.Count - 1); store.Save(p); return Results.Ok(); }
 });
+app.MapPost("/api/projects/{id}/parts/{number}/image", async (string id, int number, string? name, HttpRequest request) =>
+{
+    using var input = new MemoryStream();
+    await request.Body.CopyToAsync(input, request.HttpContext.RequestAborted);
+    input.Position = 0;
+    lock (store.Gate)
+    {
+        var p = store.Load(id);
+        return Results.Ok(store.SetPartArtwork(p, p.Parts.Single(x => x.Number == number), input, name));
+    }
+});
+app.MapPost("/api/projects/{id}/parts/{number}/whole-image", (string id, int number) =>
+{
+    lock (store.Gate) { var p = store.Load(id); return Results.Ok(store.UseWholePartImage(p, p.Parts.Single(x => x.Number == number))); }
+});
+app.MapPost("/api/projects/{id}/parts/{number}/use-artwork", (string id, int number) =>
+{
+    lock (store.Gate) { var p = store.Load(id); return Results.Ok(store.UseProjectArtwork(p, p.Parts.Single(x => x.Number == number))); }
+});
 app.MapPost("/api/projects/{id}/parts/{number}/selection", (string id, int number, SelectionRequest request) =>
 {
     lock (store.Gate) { var p = store.Load(id); return Results.Ok(store.SaveSelection(p, p.Parts.Single(x => x.Number == number), request.Mask)); }
@@ -183,7 +209,7 @@ app.MapPost("/api/projects/{id}/parts/{number}/draft-mask", (string id, int numb
         var p = store.Load(id); var part = p.Parts.Single(x => x.Number == number);
         using var image = ProjectStore.DecodePng(request.Mask);
         var root = store.DirectoryFor(id);
-        using var art = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(Path.Combine(root, p.Artwork));
+        var art = Image.Identify(store.ArtworkPath(p, part));
         if (art.Size != image.Size) throw new InvalidDataException("选区尺寸错误");
         Directory.CreateDirectory(Path.Combine(root, "draft", part.Key));
         part.DraftMask = $"draft/{part.Key}/mask.png";
@@ -213,9 +239,8 @@ app.MapPost("/api/projects/{id}/sam", async (string id, SamRequest request) =>
     return Results.Bytes(await sam.Predict(p, request), "image/png");
 });
 app.MapPost("/api/projects/{id}/keep-pending", (string id) => {lock(store.Gate){var p=store.Load(id);store.KeepPending(p);return Results.Ok(p);}});
-app.MapPost("/api/projects/{id}/export-tail", (string id,FinalizeExportRequest request)=>{lock(store.Gate)return Results.Ok(new CompactExport(store,exporter).Complete(store.Load(id),request));});
 app.MapPost("/api/projects/{id}/preview", (string id) => { lock (store.Gate) return Results.Ok(exporter.Export(store.Load(id), false)); });
-app.MapPost("/api/projects/{id}/export", (string id) => { lock (store.Gate) return Results.Ok(new CompactExport(store,exporter).Begin(store.Load(id))); });
+app.MapPost("/api/projects/{id}/export", (string id) => { lock (store.Gate) return Results.Ok(new CompactExport(store,exporter).Export(store.Load(id))); });
 app.MapGet("/api/projects/{id}/preview-model", (string id, bool? original,string? revision) =>
 {
     lock (store.Gate)
@@ -235,7 +260,7 @@ app.MapGet("/api/projects/{id}/preview-model", (string id, bool? original,string
         }
         string Url(string name) => "/files/" + id + "/" + string.Join('/', (model + name).Replace('\\','/').Split('/').Select(Uri.EscapeDataString)) + "?t=" + token;
         var atlas = Atlas.Parse(File.ReadAllText(ProjectStore.Under(store.DirectoryFor(id), model + atlasFile)));
-        return Results.Ok(new { ApiVersion = 1, p.CardId, p.ChineseName, p.SpineVersion, RendererImplemented = true, Renderer = "Rigby2D", Experimental = true,
+        return Results.Ok(new { ApiVersion = 1, p.CardId, p.ChineseName, p.SpineVersion, p.IsEffect, RendererImplemented = true, Renderer = "Rigby2D", Experimental = true,
             SkeletonUrl = Url(skeletonFile), AtlasUrl = Url(atlasFile), GameReplacementLayout = gameModel, PreviewVariant=previewVariant,
             Pages = atlas.Pages.Select(page => new { Name = page.Key, Url = Url(page.Key), Pma = page.Value.GetValueOrDefault("pma", "false") == "true" }),
             Snapshot = snapshot });
@@ -252,7 +277,7 @@ await app.StartAsync();
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single() + "/";
 JsonFile.Write(activeFile, new Dictionary<string, string> { ["Url"] = address, ["Token"] = token, ["Pid"] = Environment.ProcessId.ToString() });
 File.WriteAllText(Path.Combine(AppEnvironment.Runtime(workspace),"打开工作台.url"),"[InternetShortcut]\r\nURL="+address+"#"+token+"\r\n");
-Console.WriteLine("MD动画替换助手 1.5.7\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
+Console.WriteLine("MD动画替换助手 1.5.8\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
 if (!args.Contains("--no-browser")) TryOpenBrowser(address + "#" + token);
 await app.WaitForShutdownAsync();
 

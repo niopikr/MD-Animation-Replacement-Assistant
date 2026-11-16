@@ -7,9 +7,9 @@ import sys
 from extract_effects import Bundles, file_index, resolve
 
 
-def discover(index, game, account, card, region, output, share_bindings=False):
+def discover(index, game, account, card, region, output, share_bindings=False, effect_group=None):
     bundles = Bundles({"Bundles": []}, game, account)
-    prefix = f"/monstercutin/{region}/p{card}/"
+    prefix = effect_group.lower().rstrip("/") + "/" if effect_group else f"/monstercutin/{region}/p{card}/"
     roots = {}
     for bundle in index["Bundles"]:
         for container in bundle["Containers"]:
@@ -21,7 +21,6 @@ def discover(index, game, account, card, region, output, share_bindings=False):
                 roots[key] = tail
 
     owners = {}
-    hashes = {}
 
     def path(key):
         if not re.fullmatch(r"[a-f0-9]{8}", key):
@@ -32,7 +31,6 @@ def discover(index, game, account, card, region, output, share_bindings=False):
         live = path(key)
         if key not in bundles.paths:
             bundles.paths[key] = live
-            hashes[key] = bundles.digest(key)
         objs = bundles.open(key)
         for obj in objs:
             owners[obj.assets_file] = key
@@ -208,7 +206,7 @@ def discover(index, game, account, card, region, output, share_bindings=False):
         used.update(asset["BundleId"] for asset in [model["Skeleton"], model["Atlas"], *model["Pages"]])
         if len(model["Qualities"]) > 1:
             used.update(key for key, tail in roots.items() if tail.endswith(".prefab"))
-    return {"Models": active, "Hashes": {key: hashes[key] for key in sorted(used)}, "Bindings": binding_files}
+    return {"Models": active, "BundleIds": sorted(used)}
 
 
 if __name__ == "__main__":
@@ -216,7 +214,8 @@ if __name__ == "__main__":
     try:
         folder = Path(output)
         index = json.loads(Path(index_file).read_text(encoding="utf-8-sig"))
-        result = discover(index, Path(game), account, int(card), region, folder, "share-bindings" in options)
+        effect_group = region if "effect" in options else None
+        result = discover(index, Path(game), account, int(card), region, folder, "share-bindings" in options, effect_group)
         (folder / "dependencies.json").write_text(json.dumps(result), encoding="utf-8")
     except ValueError as error:
         print(error)

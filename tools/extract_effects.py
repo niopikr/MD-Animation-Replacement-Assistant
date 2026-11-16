@@ -231,7 +231,7 @@ def bone_local(v):
     return [pos[0] * UNIT, pos[1] * UNIT, angle(rot), scale[0], scale[1]]
 
 
-def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weighted_nodes, initial_active):
+def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weighted_nodes, initial_active, mesh_frames=None):
     d = tree(director)
     timeline = resolve(director, d.get("m_PlayableAsset"), files)
     if not timeline:
@@ -308,6 +308,7 @@ def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weig
     for frame in range(count + 1):
         at = frame / FPS
         pose = {n: setup[n].copy() for n in moving}
+        spatial = {} if mesh_frames is not None else None
         active = initial_active.copy()
         for node, spans in gates.items():
             active[node] = any(start <= at < stop - 1e-7 for start, stop in spans)
@@ -319,6 +320,8 @@ def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weig
                 v = [animation.value(index + i, time) for i in range(width)]
                 if any(x is None or not math.isfinite(x) for x in v):
                     continue
+                if spatial is not None and attr <= 4:
+                    spatial.setdefault(node, {})[attr] = v
                 if attr == 1:
                     pose[node][0:2] = [v[0] * UNIT, v[1] * UNIT]
                 elif attr == 2:
@@ -343,6 +346,8 @@ def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weig
                 name = attachment if all(active[n] for n in ancestors) else None
                 if not visible[slot] or visible[slot][-1]["name"] != name:
                     visible[slot].append({"time": roundf(at), "name": name})
+        if mesh_frames is not None:
+            mesh_frames(at, spatial, active)
 
     visible_slots = {slot for slot, frames in visible.items() if any(frame["name"] is not None for frame in frames)}
     if not visible_slots:
@@ -380,6 +385,202 @@ def timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weig
     # Preserve the Timeline's end even when the final frames only show VFX.
     bones["__root__"] = {"translate": [{"time": roundf(count / FPS), "x": 0, "y": 0}]}
     return {"Timeline_二维": {"bones": bones, "slots": slots}}, count, True
+
+
+def spatial_pose(nodes, order, channels):
+    result = {}
+    for node in order:
+        rest = nodes[node]["transform"]
+        values = channels.get(node, {})
+        pos = values.get(1, numbers(rest.get("m_LocalPosition", {}), "xyz", (0, 0, 0)))
+        scale = values.get(3, numbers(rest.get("m_LocalScale", {}), "xyz", (1, 1, 1)))
+        if 4 in values:
+            (sx, cx), (sy, cy), (sz, cz) = [(math.sin(v * math.pi / 360), math.cos(v * math.pi / 360)) for v in values[4]]
+            quat = cy*sx*cz + sy*cx*sz, sy*cx*cz - cy*sx*sz, cy*cx*sz - sy*sx*cz, cy*cx*cz + sy*sx*sz
+        else:
+            quat = values.get(2, numbers(rest.get("m_LocalRotation", {}), "xyzw", (0, 0, 0, 1)))
+        length = math.sqrt(sum(v*v for v in quat)) or 1
+        x, y, z, w = (v / length for v in quat)
+        mat = (
+            (1-2*(y*y+z*z))*scale[0], (2*(x*y-z*w))*scale[1], (2*(x*z+y*w))*scale[2], pos[0],
+            (2*(x*y+z*w))*scale[0], (1-2*(x*x+z*z))*scale[1], (2*(y*z-x*w))*scale[2], pos[1],
+            (2*(x*z-y*w))*scale[0], (2*(y*z+x*w))*scale[1], (1-2*(x*x+y*y))*scale[2], pos[2],
+        )
+        parent = result.get(nodes[node]["parent"])
+        if parent is not None:
+            mat = tuple(parent[j]*mat[i]+parent[j+1]*mat[i+4]+parent[j+2]*mat[i+8]+
+                        (parent[j+3] if i == 3 else 0) for j in (0, 4, 8) for i in range(4))
+        result[node] = mat
+    return result
+
+
+def mesh_islands(triangles, vertices, uvs):
+    # Merge coincident vertices along normals split by Unity, but preserve UV seams.
+    roots = {}
+    first = {}
+    def find(i):
+        while roots[i] != i:
+            roots[i] = roots[roots[i]]
+            i = roots[i]
+        return i
+    for triangle in triangles:
+        for i in triangle:
+            if i in roots:
+                continue
+            signature = tuple(round(v, 4) for v in (*vertices[i], *uvs[i]))
+            roots[i] = first.setdefault(signature, i)
+        head = find(triangle[0])
+        for i in triangle[1:]:
+            roots[find(i)] = head
+    groups = defaultdict(list)
+    for triangle in triangles:
+        groups[find(triangle[0])].append(triangle)
+    # Leave small disconnected fragments with their larger island that uses the same UV area.
+    bounds = [(min(uvs[i][0] for tri in tris for i in tri), min(uvs[i][1] for tri in tris for i in tri),
+               max(uvs[i][0] for tri in tris for i in tri), max(uvs[i][1] for tri in tris for i in tri), list(tris))
+              for tris in sorted(groups.values(), key=len, reverse=True)]
+    islands = []
+    for x0, y0, x1, y1, tris in bounds:
+        match = next((group for left, top, right, bottom, group in islands
+                      if left <= x0+.1 and top <= y0+.1 and right >= x1-.1 and bottom >= y1-.1), None)
+        if match is None:
+            islands.append((x0, y0, x1, y1, tris))
+        else:
+            match.extend(tris)
+    return [triangles for *_, triangles in islands]
+
+
+def skinned_parts(objects, files, nodes, by_go, texture_pages, sizes):
+    parts = []
+    for renderer in objects:
+        if renderer.type.name != "SkinnedMeshRenderer":
+            continue
+        data = tree(renderer)
+        node = by_go.get(data["m_GameObject"]["m_PathID"])
+        source = resolve(renderer, data.get("m_Mesh"), files)
+        if node is None or source is None or not data.get("m_Enabled"):
+            continue
+        mesh = source.read()
+        handler = MeshHandler(mesh, source.version)
+        handler.process()
+        binding = [ptr["m_PathID"] for ptr in data["m_Bones"]]
+        if not handler.m_UV0 or not handler.m_BoneWeights or not handler.m_BoneIndices or not mesh.m_BindPose:
+            continue
+        for submesh, tris in enumerate(handler.get_triangles()):
+            if not tris or submesh >= len(data["m_Materials"]):
+                continue
+            mat = resolve(renderer, data["m_Materials"][submesh], files)
+            if mat is None:
+                continue
+            envs = dict(tree(mat)["m_SavedProperties"]["m_TexEnvs"])
+            texture = envs.get("_BaseMap") or envs.get("_MainTex") or envs.get("_Texture2D")
+            obj = resolve(mat, texture["m_Texture"], files) if texture else None
+            page = texture_pages.get(key(obj)) if obj else None
+            if not page:
+                continue
+            tw, th = sizes[page]
+            uv = {}
+            for i in {v for tri in tris for v in tri}:
+                u, v = handler.m_UV0[i][:2]
+                uv[i] = (u*texture["m_Scale"]["x"]+texture["m_Offset"]["x"],
+                         v*texture["m_Scale"]["y"]+texture["m_Offset"]["y"])
+            tile_u = set(math.floor(u) for u, v in uv.values())
+            tile_v = set(math.floor(v) for u, v in uv.values())
+            if len(tile_u) != 1 or len(tile_v) != 1:
+                continue
+            ox, oy = next(iter(tile_u)), next(iter(tile_v))
+            uv = {i: ((u-ox)*tw, (1-v+oy)*th) for i, (u,v) in uv.items()}
+            influences = {}
+            for i in uv:
+                weights = []
+                x, y, z = handler.m_Vertices[i][:3]
+                for j, w in zip(handler.m_BoneIndices[i], handler.m_BoneWeights[i]):
+                    if w <= 1e-6 or not 0 <= j < len(binding) or binding[j] not in nodes:
+                        continue
+                    m = mesh.m_BindPose[j]
+                    weights.append((binding[j], w, (m.e00*x+m.e01*y+m.e02*z+m.e03,
+                        m.e10*x+m.e11*y+m.e12*z+m.e13, m.e20*x+m.e21*y+m.e22*z+m.e23)))
+                if weights:
+                    influences[i] = weights
+            valid = [tri for tri in tris if all(i in influences for i in tri)]
+            for island in mesh_islands(valid, handler.m_Vertices, uv):
+                ids = sorted({i for tri in island for i in tri})
+                x0 = max(0, math.floor(min(uv[i][0] for i in ids)))
+                y0 = max(0, math.floor(min(uv[i][1] for i in ids)))
+                w = min(tw, math.ceil(max(uv[i][0] for i in ids))) - x0
+                h = min(th, math.ceil(max(uv[i][1] for i in ids))) - y0
+                if w < 1 or h < 1:
+                    continue
+                indices = {v: i for i, v in enumerate(ids)}
+                dominant = defaultdict(float)
+                for i in ids:
+                    for bone, weight, _ in influences[i]:
+                        dominant[bone] += weight
+                label = safe(nodes[max(dominant, key=dominant.get)]["raw"])
+                name = f"{safe(mesh.m_Name)}_{label}_{len(parts)+1:02}"
+                parts.append((node, name, (page, x0, y0, w, h, 0, 0, w, h),
+                    [roundf(value) for i in ids for value in ((uv[i][0]-x0)/w, (uv[i][1]-y0)/h)],
+                    [indices[i] for tri in island for i in tri], [influences[i] for i in ids]))
+    return parts
+
+
+def mesh_preview(bundle, objects, files, nodes, by_go, order, setup, initial, texture_pages, sizes, director):
+    parts = skinned_parts(objects, files, nodes, by_go, texture_pages, sizes)
+    if not parts:
+        return None
+    slots, attachments, regions = [], {}, {}
+    slots_by_node, weighted = defaultdict(list), defaultdict(set)
+    base = {}
+    tracks = {}
+    def sample(at, channels, active):
+        matrices = spatial_pose(nodes, order, channels)
+        for node, name, region, uv, triangles, influences in parts:
+            if at is not None:
+                ancestor = node
+                while ancestor is not None and active[ancestor]:
+                    ancestor = nodes[ancestor]["parent"]
+                if ancestor is not None:
+                    continue
+            vertices = []
+            for weights in influences:
+                px = py = 0
+                for bone, weight, (x, y, z) in weights:
+                    m = matrices[bone]
+                    px += (m[0]*x+m[1]*y+m[2]*z+m[3])*weight
+                    py += (m[4]*x+m[5]*y+m[6]*z+m[7])*weight
+                vertices.extend((roundf(px*UNIT), roundf(py*UNIT)))
+            if at is None:
+                base[name] = vertices
+                continue
+            delta = [round(value-origin, 3) for value, origin in zip(vertices, base[name])]
+            keys = tracks[name]
+            if not keys or keys[-1]["vertices"] != delta:
+                keys.append({"time": roundf(at), "vertices": delta})
+            elif len(keys) >= 2 and keys[-2]["vertices"] == delta:
+                keys[-1]["time"] = roundf(at)
+            else:
+                keys.append({"time": roundf(at), "vertices": delta})
+    sample(None, {}, initial)
+    for node, name, region, uv, triangles, influences in parts:
+        ancestor = node
+        while ancestor is not None and initial[ancestor]:
+            ancestor = nodes[ancestor]["parent"]
+        slots.append({"name": name, "bone": "__root__", **({"attachment": name} if ancestor is None else {})})
+        attachments[name] = {name: {"type": "mesh", "uvs": uv, "vertices": base[name],
+                                    "triangles": triangles, "width": region[3], "height": region[4]}}
+        regions[name] = region
+        slots_by_node[node].append((name, name))
+        weighted[node].update(bone for weights in influences for bone, _, _ in weights)
+        tracks[name] = []
+    animation, frames, shown = timeline_animation(director, nodes, by_go, files,
+        setup, slots_by_node, weighted, initial, sample) if director else ({}, 0, None)
+    if not animation and any(tracks.values()):
+        animation = {"Timeline_二维": {"slots": {}}}
+    if animation:
+        clip = animation["Timeline_二维"]
+        clip["bones"] = {"__root__": {"translate": [{"time": roundf(frames / FPS)}]}}
+        clip["attachments"] = {"default": {name: {name: {"deform": keys}} for name, keys in tracks.items() if keys}}
+    return skeleton(bundle, [{"name": "__root__"}], slots, attachments, animation), regions, len(slots), len(slots), frames
 
 
 def prefab_preview(bundle, objects, files, texture_pages, sizes):
@@ -522,8 +723,9 @@ def prefab_preview(bundle, objects, files, texture_pages, sizes):
             weighted_nodes[node] = [p["m_PathID"] for p in skin_nodes[go]]
         sprites.append((renderer.get("m_SortingLayer", 0), renderer.get("m_SortingOrder", 0), order[node],
                         node, name, path, attachment, tint, region, weighted))
+    director = next((o for o in objects if o.type.name == "PlayableDirector"), None)
     if not sprites:
-        return None
+        return mesh_preview(bundle, objects, files, nodes, by_go, order, setup, initial, texture_pages, sizes, director)
     slots, attachments, regions, slots_by_node = [], {}, {}, defaultdict(list)
     for _, _, _, node, name, path, attachment, color, region, weighted in sorted(sprites, key=lambda r:r[:3]):
         slot = f"{name}_{len(slots)+1}"
@@ -539,7 +741,6 @@ def prefab_preview(bundle, objects, files, texture_pages, sizes):
         regions[path] = region
         slots_by_node[node].append((slot, name))
     anim, frames, shown = {}, 0, None
-    director = next((o for o in objects if o.type.name == "PlayableDirector"), None)
     if director:
         anim, frames, shown = timeline_animation(director, nodes, by_go, files, setup, slots_by_node, weighted_nodes, initial)
     if shown is False or (shown is None and not any(slot.get("attachment") for slot in slots)):
@@ -568,7 +769,7 @@ def scan(index):
             yield {"CardId": cid, "Name": index["ChineseNames"].get(str(cid), f"卡号 {cid}"), **groups}
 
 
-def native_spine(entry, loaded, texture_pages, content):
+def native_spine(entry, bundles, loaded, texture_pages, content):
     by_path = {r["LogicalPath"].lower(): r["Bundle"] for r in entry["Other"]}
     versions = []
     for path, bundle in by_path.items():
@@ -580,9 +781,10 @@ def native_spine(entry, loaded, texture_pages, content):
         candidates = [bid for p, bid in by_path.items() if PurePosixPath(p).parent == quality and p.endswith(".json")]
         if len(atlases) != 1 or len(candidates) != 1:
             continue
-        sk = next((o for o in loaded.get(candidates[0], []) if o.type.name == "TextAsset"), None)
-        if not sk:
+        skeletons = [o for o in loaded.get(candidates[0], []) if o.type.name == "TextAsset"]
+        if len(skeletons) != 1:
             continue
+        sk = skeletons[0]
         raw = sk.read().m_Script
         document = json.loads(raw)
         if not document.get("skeleton", {}).get("spine") or not document.get("animations"):
@@ -603,7 +805,13 @@ def native_spine(entry, loaded, texture_pages, content):
         label = f"原Spine-{safe(quality.name)}-{bundle}"
         content[label+".json"] = raw.encode("utf-8")
         content[label+".atlas"] = atlas.encode("utf-8")
-        versions.append({"Model":label+".json","Sprites":0,"WeightedMeshes":0,"Frames":0,"NativeSpine":True})
+        def locator(bid, obj):
+            return {"Bundle":f"0000/{bid[:2]}/{bid}", "BundleSha256":bundles.digest(bid),
+                    "FileIndex":file_index(obj), "PathId":obj.path_id, "Name":obj.peek_name()}
+        versions.append({"Model":label+".json","Group":str(quality.parent),"Sprites":0,"WeightedMeshes":0,"Frames":0,"NativeSpine":True,
+                         "Skeleton":locator(candidates[0], sk), "Atlas":locator(bundle, atlases[0]),
+                         "JsonSha256":hashlib.sha256(content[label+".json"]).hexdigest(),
+                         "AtlasSha256":hashlib.sha256(content[label+".atlas"]).hexdigest()})
     return versions
 
 
@@ -709,7 +917,6 @@ def extract_card(entry, bundles, folder, archive_path=None):
         return {"CardId": cid, "Name": name, "Status": "无支持格式的可编辑贴图", "Versions": [], "Pages": 0}
 
     content = dict(pngs)
-    content["效果贴图映射.json"] = json_bytes({"Format":"md-unity-effect-textures-v1","CardId":cid,"Name":name,"Pages":pages})
     content["游戏资源索引.json"] = json_bytes(entry)
     sheet, layout = sheet_preview(sizes)
     content["贴图一览.json"] = json_bytes(sheet)
@@ -730,17 +937,19 @@ def extract_card(entry, bundles, folder, archive_path=None):
         except Exception as ex:
             errors.append(f"{label}: {type(ex).__name__} {ex}")
     try:
-        versions.extend(native_spine(entry, loaded, texture_pages, content))
+        versions.extend(native_spine(entry, bundles, loaded, texture_pages, content))
     except Exception as ex:
         errors.append(f"Spine: {type(ex).__name__} {ex}")
     status = "原生 Spine 与二维预览" if any(v.get("NativeSpine") for v in versions) else (
         "含二维时间轴片段" if any(v["Frames"] for v in versions) else "二维拆件参考" if versions else "贴图参考")
+    content["效果贴图映射.json"] = json_bytes({"Format":"md-unity-effect-textures-v1","CardId":cid,"Name":name,"Pages":pages,
+                                               "NativeModels":[v for v in versions if v.get("NativeSpine")]})
     readme = [f"# {name}〔{cid}〕", "", f"预览级别：{status}。", "",
               "Rigby2D 中打开同目录的 JSON。贴图一览显示可编辑的原图集页。",
               "角色项目保留可读取的二维网格与权重。动作仅转换可映射的骨骼变换与显隐。Unity 粒子、3D、材质和音效由游戏原资源继续播放。",
               "回包可直接编辑此文件夹内的原有 PNG，保留文件名、大小、透明度和原图集坐标。保留「效果贴图映射.json」。",
               "也可在 Rigby2D 中导出「JSON + Atlas」，放到「Rigby2D导出」子文件夹。保持 atlas 与原模型同名，并保留图片资源名及部件原画布尺寸。",
-              "在助手首页选择解压后的此文件夹，点击「打包效果替换文件」。Unity 原动作继续使用游戏原文件。",
+              "在助手首页选择解压后的此文件夹，点击「打包效果替换文件」。原生 Spine 可勾选「按 Rigby2D 效果转换」写回动作。Unity 效果使用游戏原时间轴。",
               "", *[f"- {v['Model']} · 原生 Spine" if v.get("NativeSpine") else
                     f"- {v['Model']} · {v['Sprites']} 个 Sprite · {v['WeightedMeshes']} 个带权重网格 · {v['Frames']} 个动作采样间隔" for v in versions]]
     if errors:

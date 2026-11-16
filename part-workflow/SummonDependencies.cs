@@ -8,7 +8,7 @@ internal sealed record SummonTarget(GameReplacementExporter.Locator Skeleton, Ga
     GameReplacementExporter.Locator[] Pages, string SkeletonFile, string AtlasFile, int[][] Dimensions,
     string[] Qualities, string[] Animations);
 
-internal sealed record SummonDependencies(SummonTarget[] Models, Dictionary<string, string> Hashes, string[]? Bindings = null)
+internal sealed record SummonDependencies(SummonTarget[] Models, string[] BundleIds)
 {
     internal static string Label(string variant) => Path.GetFileName(Path.GetDirectoryName(variant))!;
 
@@ -24,10 +24,15 @@ internal sealed record SummonDependencies(SummonTarget[] Models, Dictionary<stri
             Region(candidate) == Region(variant));
 
     internal static SummonDependencies Read(string workspace, GameSettings settings, int card, string variant, string work,
-        bool shareBindings = false)
+        bool shareBindings = false) => ReadResolved(workspace, settings, card, Region(variant), work, shareBindings, false);
+
+    internal static SummonDependencies ReadEffect(string workspace, GameSettings settings, int card, string group, string work) =>
+        ReadResolved(workspace, settings, card, group, work, true, true);
+
+    private static SummonDependencies ReadResolved(string workspace, GameSettings settings, int card, string region, string work,
+        bool shareBindings, bool effect)
     {
         var index = Path.Combine(workspace, "数据", "索引", "index.json");
-        var region = Region(variant);
         if (region.Length == 0 || !File.Exists(index)) return new([], []);
         var runtime = AppEnvironment.Resource("effect-runtime");
         var start = new ProcessStartInfo(Path.Combine(runtime, "python.exe"))
@@ -44,6 +49,7 @@ internal sealed record SummonDependencies(SummonTarget[] Models, Dictionary<stri
             index, settings.GameRoot, settings.Account, card.ToString(System.Globalization.CultureInfo.InvariantCulture), region, work })
             start.ArgumentList.Add(value);
         if (shareBindings) start.ArgumentList.Add("share-bindings");
+        if (effect) start.ArgumentList.Add("effect");
         using var process = Process.Start(start) ?? throw new InvalidOperationException("无法启动召唤依赖检查。");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();

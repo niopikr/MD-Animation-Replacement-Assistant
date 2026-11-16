@@ -24,8 +24,14 @@ public sealed class Exporter(ProjectStore store)
         var atlas = Atlas.Parse(File.ReadAllText(Path.Combine(source, project.AtlasFile)));
         var changes = new List<object>();
         var replacements = project.Parts.Where(p => p.Status is "replaced" or "empty").ToArray();
+        if (project.IsEffect)
+        {
+            ApplyEffectParts(root, model, replacements);
+            changes.AddRange(replacements.Select(part => new
+            { part.Number, part.Name, SourcePage = part.Page, ExportPage = part.Page, part.Status, part.ConfirmedRevision }));
+        }
         var skeleton = JsonNode.Parse(File.ReadAllText(Path.Combine(source, project.SkeletonFile)))!;
-        foreach (var part in replacements)
+        foreach (var part in project.IsEffect ? [] : replacements)
         {
             var regionName = part.RegionName;
             if (string.IsNullOrEmpty(regionName))
@@ -65,7 +71,7 @@ public sealed class Exporter(ProjectStore store)
             File.Copy(ProjectStore.Under(root,revision.Aligned),Path.Combine(components,part.Key+"-"+SafeName(part.Name)+".png"));
             changes.Add(new {part.Number,part.Name,SourcePage=part.Page,ExportPage=name,part.Status,part.ConfirmedRevision});
         }
-        if (replacements.Length > 0)
+        if (replacements.Length > 0 && !project.IsEffect)
         {
             var text = new StringBuilder();
             foreach (var page in atlas.Pages.ToArray())
@@ -123,6 +129,35 @@ public sealed class Exporter(ProjectStore store)
         if (AppEnvironment.Portable(store.Workspace)) File.WriteAllText(Path.Combine(destination,"先看这里.txt"), "使用程序内的整体动画预览查看此快照。可返回项目重做任意部件，再生成新的预览或替换文件。\r\n", new UTF8Encoding(true));
         project.Exports.Add(relative); store.Save(project);
         return new { Folder = destination, Relative = relative, ModelFolder = model, Config = Directory.GetFiles(model,"*.config.json").FirstOrDefault() ?? "", IsFinal = final, Changes = changes.Count };
+    }
+    private static void ApplyEffectParts(string root, string model, Part[] replacements)
+    {
+        foreach (var group in replacements.GroupBy(part => part.Page))
+        {
+            var page = ProjectStore.Under(model, group.Key);
+            using var existing = Image.Load<Rgba32>(page);
+            var changed = false;
+            foreach (var part in group)
+            {
+                var revision = JsonFile.Read<Revision>(ProjectStore.Under(root, part.ConfirmedRevision));
+                using var image = Image.Load<Rgba32>(ProjectStore.Under(root, revision.Aligned));
+                if (image.Width != part.Width || image.Height != part.Height) throw new InvalidDataException("确认部件尺寸错误：" + part.Name);
+                if (part.Pma) Atlas.ToPma(image);
+                using var packed = Atlas.Pack(image, part);
+                using var mask = Atlas.MeshMask(part);
+                using var rgba = Atlas.MaskRgba(mask);
+                using var packedMask = Atlas.Pack(rgba, part);
+                var bounds = part.Bounds;
+                for (var y = 0; y < packed.Height; y++)
+                    for (var x = 0; x < packed.Width; x++)
+                    {
+                        if (packedMask[x, y].A == 0 || existing[x + bounds[0], y + bounds[1]] == packed[x, y]) continue;
+                        existing[x + bounds[0], y + bounds[1]] = packed[x, y];
+                        changed = true;
+                    }
+            }
+            if (changed) JsonFile.Png(page, existing);
+        }
     }
     static string SafeName(string name) => string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 }

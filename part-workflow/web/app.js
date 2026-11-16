@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const token = location.hash.slice(1) || sessionStorage.getItem('workflowToken');
 if (token) sessionStorage.setItem('workflowToken', token);
-let bootstrap, project, part, source, reference, mesh, cutout;
+let bootstrap, project, part, artwork, source, reference, mesh, cutout;
 let effectCards = [];
 let libraryTimer=null,libraryRunning=false,libraryLastJob='';
 let busy = false, mode = 'manual', mask = document.createElement('canvas'), undo = [];
@@ -38,6 +38,11 @@ function partApi(suffix, p=part){return `/api/projects/${project.id}/parts/${p.n
 function setControls(){
   if(!$('sourceCanvas'))return;
   for(const id of ['createButton','keepPendingButton','artworkInput','previewButton','exportButton','keepButton','restoreButton','generateButton','refineButton','confirmButton','previousButton','nextButton','homeButton','folderButton','undoButton','clearButton','samModeButton','lassoButton','pointButton','manualBrushButton','shapeButton','emptyButton','sourceZoomIn','sourceZoomOut','cutoutZoomIn','cutoutZoomOut','cutoutActualSize']) $(id).disabled=busy;
+  const hasPartImage=Boolean(part?.draftSource);
+  $('partImageButton').disabled=busy||!part;
+  $('artworkButton').disabled=busy||!part||Boolean(artwork&&!hasPartImage);
+  $('wholePartImageButton').disabled=busy||!hasPartImage;
+  $('wholePartImageButton').hidden=!hasPartImage;
   $('keepPendingButton').disabled=busy||!project||!project.parts.some(p=>p.status==='pending');
   $('rigbyExportButton').disabled=busy||!$('variantSelect').value;
   $('summonBrowseButton').disabled=busy;
@@ -47,6 +52,10 @@ function setControls(){
   $('effectSearch').disabled=busy;
   $('effectSelect').disabled=busy||$('effectSelect').options.length===1;
   $('effectExtractButton').disabled=busy||libraryRunning||!$('effectSelect').value;
+  $('effectCreateButton').disabled=busy||libraryRunning||!$('effectSelect').value;
+  $('effectModelSelect').disabled=busy;
+  $('effectModelConfirm').disabled=busy||libraryRunning;
+  $('effectConvert').disabled=busy||libraryRunning;
   $('effectBrowseButton').disabled=busy;
   $('effectFolder').disabled=busy;
   $('effectPackButton').disabled=busy;
@@ -56,6 +65,9 @@ function setControls(){
   $('refineButton').disabled=busy||!source||!bootstrap?.samAvailable;
   $('samModeButton').disabled=busy||!source||!bootstrap?.samAvailable;
   $('pointButton').disabled=busy||!source||!bootstrap?.samAvailable;
+  $('lassoButton').disabled=busy||!source||!bootstrap?.samAvailable;
+  for(const id of ['manualBrushButton','clearButton','fitButton','sourceZoomIn','sourceZoomOut'])$(id).disabled=busy||!source;
+  $('undoButton').disabled=busy||!undo.length;
   $('shapeButton').disabled=busy||!source;for(const input of $('shapeControls').querySelectorAll('input,button'))input.disabled=busy||!source;
   $('confirmButton').disabled=busy||!cutout||dirtyMask;
   for(const id of ['cutoutZoomIn','cutoutZoomOut','cutoutActualSize','cutoutPercent'])$(id).disabled=busy||!cutout;
@@ -81,11 +93,11 @@ function populateVariants(){
 async function home(){await flushDrafts();bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);await loadEffectCatalog();if(!libraryTimer)pollLibrary();$('recentProjects').replaceChildren();
   for(const p of bootstrap.projects){const button=document.createElement('button');const title=document.createElement('span');title.textContent=`${p.chineseName}〔${p.cardId}〕`;const info=document.createElement('small');info.textContent=`${p.completed}/${p.total} 已确认 · ${new Date(p.updatedUtc).toLocaleString()} · ${p.id}`;button.append(title,info);button.onclick=()=>action(()=>openProject(p.id));$('recentProjects').append(button);}
   if(!bootstrap.projects.length)$('recentProjects').textContent='尚无项目。新建后会自动保存在本机。';
-  $('home').hidden=false;$('editor').hidden=true;message(bootstrap.samAvailable?'已找到本地素材库和 SAM 2.1。可新建项目，或继续已有进度。':'已找到本地素材库。当前未找到 SAM 2.1 模型，可正常使用套索。');
+  $('home').hidden=false;$('editor').hidden=true;message(bootstrap.samAvailable?'已找到本地素材库和 SAM 2.1。可新建项目，或继续已有进度。':'已找到本地素材库。当前未找到 SAM 2.1 模型，可直接用部件图或严格涂抹。');
 }
 async function openProject(id){await flushDrafts();project=await api(`/api/projects/${id}`);$('home').hidden=true;$('editor').hidden=false;$('projectName').textContent=`${project.chineseName}〔${project.cardId}〕`;
-  source=project.artwork?await image(fileUrl(project.artwork)):null;$('artworkPick').hidden=!!source;
-  if(source){mask.width=source.width;mask.height=source.height;$('sourceSize').textContent=`${source.width} × ${source.height}`;}else{$('sourceSize').textContent='先选择新立绘';mask.width=1;mask.height=1;}
+  artwork=project.artwork?await image(fileUrl(project.artwork,false)):null;
+  source=null;
   await selectPart(project.currentPart,false);requestAnimationFrame(fitSource);saveText('项目已读取 · 自动保存');
 }
 function renderList(){
@@ -100,29 +112,38 @@ function renderList(){
 }
 async function selectPart(index,persist=true){
   await flushDrafts();const generation=++loadGeneration;part=project.parts[index];project.currentPart=index;cutout=null;undo=[];dirtyMask=false;tintDirty=true;polygon=[];pointer=null;
-  if(source){mask.width=source.width;mask.height=source.height;}
+  const previousSource=source;
   const base=`templates/${part.key}/`;
-  [reference,mesh]=await Promise.all([image(fileUrl(base+'reference.png')),image(fileUrl(base+'mesh.png'))]);
+  [reference,mesh,source]=await Promise.all([image(fileUrl(base+'reference.png')),image(fileUrl(base+'mesh.png')),
+    part.draftSource?image(fileUrl(part.draftSource,false)):artwork]);
   if(generation!==loadGeneration)return;
+  mask.width=source?.width||1;mask.height=source?.height||1;
+  $('sourceSize').textContent=source?`${source.width} × ${source.height}`:'未导入图片';
+  $('sourceZoomText').textContent='—';
+  $('sourceName').textContent=part.draftSource?(part.draftSourceName||'已导入部件图片'):(artwork?'正在使用整张立绘':'导入当前部件的图片，或从整张立绘中圈选。');
+  $('partImageButton').textContent=part.draftSource?'更换部件图片':'导入部件图片';
+  $('artworkButton').textContent=artwork?(part.draftSource?'改用整张立绘':'已使用整张立绘'):'导入整张立绘';
+  $('frameReferences').hidden=Boolean(part.draftSource);
   $('reference').src=reference.src;$('stepNumber').textContent=`部件 ${part.number} / ${project.parts.length}`;$('partTitle').textContent=part.label;$('partSize').textContent=`${part.width} × ${part.height}`;
   $('partDescription').textContent=`${part.name} · ${part.type} · ${part.page} · ${project.variant.replaceAll('\\','/').split('/').slice(-2,-1)[0]}`;
-  $('partHint').textContent=`本步圈选「${part.label}」。请按上图的内容和方向确定范围，尽量保留关节和遮挡边缘；只选当前部件，缺少的隐藏部分需要另行补画。`;
+  $('partHint').textContent=`按参考图的方向和轮廓对齐「${part.label}」，留意关节与其他部件的交界。`;
   $('revisionSelect').replaceChildren();for(const [i,r] of part.revisions.entries())$('revisionSelect').append(new Option(`第 ${i+1} 次确认 · ${r.split('/').at(-2)}`,r));
   if(part.confirmedRevision)$('revisionSelect').value=part.confirmedRevision;
   prepareShape();resetPartReference();
   if(source&&part.draftMask){const m=await image(fileUrl(part.draftMask));mask.getContext('2d').drawImage(m,0,0);}
-  if(part.draftCutout)cutout=await image(fileUrl(part.draftCutout));
-  setMode('manual','manualBrushButton');syncPlacement();renderList();renderSource();renderAligned();
+  if(part.draftCutout)cutout=part.draftCutout===part.draftSource?source:await image(fileUrl(part.draftCutout));
+  setMode('manual','manualBrushButton');syncPlacement();renderList();renderAligned();
+  if(source!==previousSource)fitSource();
   if(persist)await api(`/api/projects/${project.id}/step`,{number:index});
   if(window.updatePartReferences)window.updatePartReferences(project.id,token,part);
-  saveText('进度已保存');setControls();message(part.status==='pending'?'参考当前部件，在立绘中圈选，然后对齐并确认。':`当前部件${part.status==='replaced'?'已替换':part.status==='empty'?'已替换为空素材':'已保留原图'}。可以重新圈选，确认后会增加一个历史版本。`);
+  saveText('进度已保存');setControls();message(part.status==='pending'?'导入部件图片可直接对齐；需要分割时，圈选要保留的像素。':`当前部件${part.status==='replaced'?'已替换':part.status==='empty'?'已替换为空素材':'已保留原图'}。再次确认会保存新的历史版本。`);
 }
 function fitSource(){if(!source)return;const box=$('sourceHost').getBoundingClientRect();view.scale=Math.min((box.width-20)/source.width,(box.height-20)/source.height);view.x=(box.width-source.width*view.scale)/2;view.y=(box.height-source.height*view.scale)/2;renderSource();}
 function renderSource(){
   if(!$('sourceHost'))return;
   const box=$('sourceHost').getBoundingClientRect();const dpr=devicePixelRatio||1;const cw=Math.max(1,Math.round(box.width*dpr)),ch=Math.max(1,Math.round(box.height*dpr));if(canvas.width!==cw)canvas.width=cw;if(canvas.height!==ch)canvas.height=ch;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,box.width,box.height);if(!source){const layer=$('tailFrameReference');if(layer?.dataset.ready==='true'&&$('tailLayerVisible').checked){const scale=Math.min(box.width/layer.width,box.height/layer.height);ctx.globalAlpha=+$('tailLayerOpacity').value;ctx.drawImage(layer,(box.width-layer.width*scale)/2,(box.height-layer.height*scale)/2,layer.width*scale,layer.height*scale);ctx.globalAlpha=1;}return;}
-  $('sourceZoomText').textContent=Math.round(view.scale*100)+'%';ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);ctx.globalAlpha=+$('backgroundDim').value;ctx.drawImage(source,0,0);ctx.globalAlpha=1;
-  const layer=$('tailFrameReference');if(layer?.dataset.ready==='true'&&$('tailLayerVisible').checked){const scale=Math.min(source.width/layer.width,source.height/layer.height);ctx.save();ctx.globalAlpha=+$('tailLayerOpacity').value;ctx.drawImage(layer,(source.width-layer.width*scale)/2,(source.height-layer.height*scale)/2,layer.width*scale,layer.height*scale);ctx.restore();}
+  $('sourceZoomText').textContent=Math.round(view.scale*100)+'%';ctx.save();ctx.translate(view.x,view.y);ctx.scale(view.scale,view.scale);ctx.globalAlpha=part.draftSource&&!part.draftMask&&!dirtyMask?1:+$('backgroundDim').value;ctx.drawImage(source,0,0);ctx.globalAlpha=1;
+  const layer=$('tailFrameReference');if(!part.draftSource&&layer?.dataset.ready==='true'&&$('tailLayerVisible').checked){const scale=Math.min(source.width/layer.width,source.height/layer.height);ctx.save();ctx.globalAlpha=+$('tailLayerOpacity').value;ctx.drawImage(layer,(source.width-layer.width*scale)/2,(source.height-layer.height*scale)/2,layer.width*scale,layer.height*scale);ctx.restore();}
   if(tintDirty){tint.width=mask.width;tint.height=mask.height;const t=tint.getContext('2d');t.drawImage(mask,0,0);t.globalCompositeOperation='source-in';t.fillStyle=$('overlayColor').value;t.fillRect(0,0,tint.width,tint.height);t.globalCompositeOperation='destination-in';t.drawImage(source,0,0);selectedView.width=mask.width;selectedView.height=mask.height;const sv=selectedView.getContext('2d');sv.drawImage(source,0,0);sv.globalCompositeOperation='destination-in';sv.drawImage(mask,0,0);tintDirty=false;}ctx.drawImage(selectedView,0,0);ctx.globalAlpha=+$('overlayAlpha').value;ctx.drawImage(tint,0,0);ctx.globalAlpha=1;if(pointer?.kind==='brush'){ctx.globalAlpha=.6;ctx.drawImage(hint,0,0);ctx.globalAlpha=1;}
   if(polygon.length){ctx.beginPath();ctx.moveTo(...polygon[0]);for(const p of polygon.slice(1))ctx.lineTo(...p);ctx.lineWidth=2/view.scale;ctx.strokeStyle='#8ef2de';ctx.stroke();}
   if(mode==='shape'&&shapeTemplate){ctx.save();ctx.globalAlpha=.15;ctx.drawImage(shapeTemplate,shape.x-shapeTemplate.width*shape.scale/2,shape.y-shapeTemplate.height*shape.scale/2,shapeTemplate.width*shape.scale,shapeTemplate.height*shape.scale);ctx.globalAlpha=1;ctx.strokeStyle='#fff267';ctx.lineWidth=1.5/view.scale;ctx.strokeRect(shape.x-shapeTemplate.width*shape.scale/2,shape.y-shapeTemplate.height*shape.scale/2,shapeTemplate.width*shape.scale,shapeTemplate.height*shape.scale);ctx.restore();}
@@ -144,7 +165,7 @@ canvas.addEventListener('pointerdown',e=>{
  if(e.button===1||space){pointer={kind:'pan',x:e.clientX,y:e.clientY,originalX:view.x,originalY:view.y};return;}
  if(e.button!==0&&e.button!==2)return;
  const point=localPoint(e);const op=e.button===2?'subtract':'add';
- if($('tailLayerDrag').checked&&e.button===0){pointer={kind:'tailLayer',last:point};return;}
+ if(!part.draftSource&&$('tailLayerDrag').checked&&e.button===0){pointer={kind:'tailLayer',last:point};return;}
  if(mode==='shape'){strokeOperation=op;shape.x=point[0];shape.y=point[1];syncShape();pointer={kind:'shape'};renderSource();return;}
  if(mode==='point'){action(()=>runSam([[point[0],point[1],1]],op));return;}
  strokeOperation=op;hint.width=mask.width;hint.height=mask.height;
@@ -157,33 +178,38 @@ async function finishPolygon(){if(polygon.length>=3){hint.width=mask.width;hint.
 canvas.addEventListener('pointerup',async()=>{const kind=pointer?.kind;pointer=null;if(kind==='shape')applyShape(strokeOperation);else if(kind==='lasso')await finishPolygon();else if(kind==='brush'){if(mode==='manual')mergeSelection(hint,strokeOperation);else await action(()=>runSam([],strokeOperation,hint));}polygon=[];renderSource();});
 canvas.addEventListener('keydown',e=>{if(e.key==='Escape'){polygon=[];renderSource();}});
 canvas.addEventListener('pointercancel',()=>{pointer=null;polygon=[];renderSource();});
-canvas.addEventListener('wheel',e=>{if(!source)return;e.preventDefault();if($('tailLayerDrag').checked){window.zoomTailReference?.(e.deltaY<0?1.1:1/1.1);return;}const r=canvas.getBoundingClientRect(),point=localPoint(e);const scale=Math.max(.015,Math.min(12,view.scale*Math.exp(-e.deltaY*.0015)));view.scale=scale;view.x=e.clientX-r.left-point[0]*scale;view.y=e.clientY-r.top-point[1]*scale;renderSource();},{passive:false});
+canvas.addEventListener('wheel',e=>{if(!source)return;e.preventDefault();if(!part.draftSource&&$('tailLayerDrag').checked){window.zoomTailReference?.(e.deltaY<0?1.1:1/1.1);return;}const r=canvas.getBoundingClientRect(),point=localPoint(e);const scale=Math.max(.015,Math.min(12,view.scale*Math.exp(-e.deltaY*.0015)));view.scale=scale;view.x=e.clientX-r.left-point[0]*scale;view.y=e.clientY-r.top-point[1]*scale;renderSource();},{passive:false});
 window.addEventListener('keydown',e=>{if(e.code==='Space'&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){space=true;e.preventDefault();}});window.addEventListener('keyup',e=>{if(e.code==='Space')space=false;});window.addEventListener('blur',()=>{space=false;pointer=null;polygon=[];});
 async function runSam(points=[],operation='replace',prompt=mask){
   if(!source)return;await flushDrafts();message('SAM 正在本机计算，请稍候…');
-  const blob=await api(`/api/projects/${project.id}/sam`,{mask:prompt.toDataURL(),points,limitToHint:points.length===0&&$('samLimit').checked});const url=URL.createObjectURL(blob);
+  const blob=await api(`/api/projects/${project.id}/sam`,{partNumber:part.number,mask:points.length?'':prompt.toDataURL(),points,limitToHint:points.length===0&&$('samLimit').checked});const url=URL.createObjectURL(blob);
   try{const prediction=await image(url);pushUndo();const m=mask.getContext('2d');if(operation==='replace')m.clearRect(0,0,mask.width,mask.height);m.save();m.globalCompositeOperation=operation==='subtract'?'destination-out':'source-over';if(operation==='subtract'){const hard=document.createElement('canvas');hard.width=prediction.width;hard.height=prediction.height;const hc=hard.getContext('2d');hc.drawImage(prediction,0,0);const pixels=hc.getImageData(0,0,hard.width,hard.height);for(let i=3;i<pixels.data.length;i+=4)pixels.data[i]=pixels.data[i]>0?255:0;hc.putImageData(pixels,0,0);m.drawImage(hard,0,0);}else m.drawImage(prediction,0,0);m.restore();dirtySelection();renderSource();message('SAM 结果已加入选区。可继续套索修正，再生成对齐预览。');}finally{URL.revokeObjectURL(url);}
 }
-function syncPlacement(){$('cutoutPercent').value=cutout?Math.round(part.placement.width/cutout.width*10000)/100:'';$('cutoutZoomText').textContent=cutout?Math.round(part.placement.width/cutout.width*100)+'%':'—';for(const k of ['X','Y','Width','Height','Rotation'])$('place'+k).value=Math.round((part.placement[k.toLowerCase()]||0)*100)/100;$('placeFlip').checked=part.placement.flip;}
+function syncPlacement(updatePercent=true){if(updatePercent)$('cutoutPercent').value=cutout?Math.round(part.placement.width/cutout.width*10000)/100:'';$('cutoutZoomText').textContent=cutout?Math.round(part.placement.width/cutout.width*100)+'%':'—';for(const k of ['X','Y','Width','Height','Rotation'])$('place'+k).value=Math.round((part.placement[k.toLowerCase()]||0)*100)/100;$('placeFlip').checked=part.placement.flip;}
 function readPlacement(){for(const k of ['X','Y','Width','Height','Rotation']){const n=+$('place'+k).value;if(Number.isFinite(n))part.placement[k.toLowerCase()]=k==='Width'||k==='Height'?Math.max(1,n):n;}part.placement.flip=$('placeFlip').checked;$('cutoutPercent').value=cutout?Math.round(part.placement.width/cutout.width*10000)/100:'';renderAligned();if(placementTimer)clearTimeout(placementTimer);placementTimer=setTimeout(()=>{placementTimer=null;queuePlacementSave()},350);}
 function renderRawAlignment(){aligned.width=part.width;aligned.height=part.height;const a=aligned.getContext('2d');a.clearRect(0,0,aligned.width,aligned.height);if(cutout){const p=part.placement;a.save();a.translate(p.x,p.y);a.rotate(p.rotation*Math.PI/180);a.scale(p.flip?-1:1,1);a.drawImage(cutout,-p.width/2,-p.height/2,p.width,p.height);a.restore();}return aligned;}
 function renderAligned(){if(!part)return;$('cutoutPreview').hidden=!cutout;if(cutout)$('cutoutImage').src=cutout.src;else $('cutoutImage').removeAttribute('src');const target=$('alignmentCanvas');target.width=part.width;target.height=part.height;const a=target.getContext('2d');a.clearRect(0,0,target.width,target.height);
   if(reference&&$('ghostToggle').checked){a.globalAlpha=cutout?0.25:1;a.drawImage(reference,0,0);a.globalAlpha=1;}
   if(cutout){renderRawAlignment();masked.width=part.width;masked.height=part.height;const m=masked.getContext('2d');m.drawImage(aligned,0,0);if($('clipToggle').checked){m.globalCompositeOperation='destination-in';m.drawImage(mesh,0,0);}a.drawImage(masked,0,0);}
-  $('alignmentState').textContent=cutout?'已按选区裁片，可拖动或缩放':part.status==='empty'?'此部件已确认为全透明':'等待涂抹选区';
+  $('alignmentState').textContent=cutout?(part.draftSource&&!part.draftMask?'整张部件图 · 可拖动或缩放':'已按选区裁片 · 可拖动或缩放'):part.status==='empty'?'此部件已确认为全透明':'等待部件图片或选区';
 }
 let alignDrag;
 $('alignmentCanvas').addEventListener('pointerdown',e=>{if(busy||!cutout)return;const r=e.currentTarget.getBoundingClientRect();alignDrag={x:e.clientX,y:e.clientY,px:part.placement.x,py:part.placement.y,sx:part.width/r.width,sy:part.height/r.height};e.currentTarget.setPointerCapture(e.pointerId);});
 $('alignmentCanvas').addEventListener('pointermove',e=>{if(!alignDrag)return;part.placement.x=alignDrag.px+(e.clientX-alignDrag.x)*alignDrag.sx;part.placement.y=alignDrag.py+(e.clientY-alignDrag.y)*alignDrag.sy;syncPlacement();renderAligned();});
 $('alignmentCanvas').addEventListener('pointerup',()=>{if(alignDrag){alignDrag=null;queuePlacementSave();}});
-async function complete(kind){await flushDrafts();const next=await api(partApi(kind),kind==='confirm'?{image:'',placement:part.placement}:{});project=next;const pending=project.parts.findIndex((p,i)=>i>project.currentPart-1&&p.status==='pending');const any=project.parts.findIndex(p=>p.status==='pending');const index=pending>=0?pending:any>=0?any:Math.min(project.currentPart,project.parts.length-1);await selectPart(index);if(any<0){message('全部部件已确认，可以预览或导出替换文件。');$('completionDialog').showModal();}}
+async function complete(kind){
+ const current=project.currentPart;
+ await flushDrafts();project=await api(partApi(kind),kind==='confirm'?{image:'',placement:part.placement}:{});
+ const next=project.parts.findIndex((p,i)=>i>current&&p.status==='pending');
+ const first=project.parts.findIndex(p=>p.status==='pending');
+ await selectPart(next>=0?next:first>=0?first:current);
+ if(first<0)message('全部部件已确认。需要回包时，点击「导出替换文件」。');
+}
 async function exportPackage(final){
- await flushDrafts();message(final?'正在生成替换文件与原始文件…':'正在生成整体预览…');
+ await flushDrafts();message(final?'正在生成替换文件…':'正在生成整体预览…');
  latestExport=await api(`/api/projects/${project.id}/${final?'export':'preview'}`,{});
  if(!final){await window.openAnimationPreview(project.id,token);message(`已保存：${latestExport.folder}`);return;}
- try{message('正在渲染替换后尾帧并完成导出…');const image=await window.renderExportTailFrame(project.id,token,latestExport.relative);latestExport=await api(`/api/projects/${project.id}/export-tail`,{revision:latestExport.relative,image});}
- catch(e){throw Error('尾帧未能生成，导出尚未完成，请重试：'+e.message);}
- $('exportTitle').textContent='替换文件与尾帧已导出';$('exportSummary').textContent=`${latestExport.changes} 个替换部件，${latestExport.bundleCount} 个游戏文件，另同步 ${latestExport.companionCount} 组画质。`;
+ $('exportTitle').textContent='替换文件已导出';$('exportSummary').textContent=`${latestExport.changes} 个替换部件，${latestExport.bundleCount} 个游戏文件${project.isEffect?'。':`，另同步 ${latestExport.companionCount} 组画质。`}`;
  const install=await api('/api/settings');$('installTarget').textContent=install.gameRoot+'/LocalData/'+install.account;
  $('exportDialog').showModal();message(`已保存：${latestExport.folder}`);
 }
@@ -213,6 +239,7 @@ async function loadEffectCatalog(){
 }
 function populateEffects(){
   const select=$('effectSelect'), current=select.value;
+  $('effectModelPicker').hidden=true;
   const filter=$('effectSearch').value.trim().normalize('NFKC').toLowerCase();
   const matches=effectCards.filter(card=>`${card.name} ${card.cardId}`.normalize('NFKC').toLowerCase().includes(filter));
   select.replaceChildren(new Option(matches.length?'选择效果卡片':'没有匹配的效果卡片',''),
@@ -222,7 +249,24 @@ function populateEffects(){
   setControls();
 }
 $('effectSearch').oninput=populateEffects;
-$('effectSelect').onchange=setControls;
+$('effectSelect').onchange=()=>{$('effectModelPicker').hidden=true;setControls();};
+async function createEffectProject(model){
+  const cardId=Number($('effectSelect').value);
+  if(!cardId)throw Error('请先选择效果卡片。');
+  message('正在从本机游戏读取效果动画和部件…');
+  const result=await api('/api/effects/projects',{cardId,model});
+  if(result.project){
+    $('effectModelPicker').hidden=true;
+    await openProject(result.project.id);
+    return;
+  }
+  $('effectModelSelect').replaceChildren(...result.models.map(entry=>
+    new Option(entry.label+(entry.animated?'':'（静态部件）'),entry.model)));
+  $('effectModelPicker').hidden=false;
+  message('请选择要替换部件的效果模型。');
+}
+$('effectCreateButton').onclick=()=>action(()=>createEffectProject());
+$('effectModelConfirm').onclick=()=>action(()=>createEffectProject($('effectModelSelect').value));
 $('effectExtractButton').onclick=()=>action(async()=>{
   const cardId=Number($('effectSelect').value);
   if(!cardId)throw Error('请先选择效果卡片。');
@@ -232,9 +276,9 @@ $('effectExtractButton').onclick=()=>action(async()=>{
   downloadZip(archive);
   message('效果素材 ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开效果 JSON。');
 });
-async function convertSummonForPack(request, show){
+async function convertForPack(route, request, show){
   show('正在读取本机的 Rigby2D 导出文件…');
-  const source=await api('/api/rigby/conversion-source',request);
+  const source=await api(route+'/conversion-source',request);
   return new Promise((resolve,reject)=>{
     const worker=new Worker('/rigby/summon-convert-worker.js',{type:'module'});
     const fail=error=>{worker.terminate();reject(Error(error));};
@@ -255,7 +299,7 @@ async function convertSummonForPack(request, show){
 function bindTexturePack(prefix, route, folderHint, selection){
   const field=$(prefix+'Folder'), button=$(prefix+'PackButton');
   const link=$(prefix+'PackDownload'), status=$(prefix+'PackStatus');
-  const convert=prefix==='summon'?$('summonConvert'):null;
+  const convert=$(prefix+'Convert');
   const label=button.textContent;
   function show(text,error=false){
     status.textContent=text;
@@ -292,10 +336,10 @@ function bindTexturePack(prefix, route, folderHint, selection){
         const request={folder,...selection()};
         let summary='';
         if(convert?.checked){
-          const result=await convertSummonForPack(request,show);
+          const result=await convertForPack(route,request,show);
           request.conversion=result.conversion;
           summary=result.summary;
-          show('转换校验通过，正在生成高清、低清及所用共享资源的替换文件…');
+          show('转换校验通过，正在生成游戏替换文件…');
         }
         const archive=await api(route+'/pack',request);
         if(!archive?.blob)throw Error('未收到替换 ZIP，请重试。');
@@ -320,7 +364,34 @@ bindTexturePack('summon','/api/rigby','请先选择已解压的召唤素材文�
   ()=>({cardId:Number($('cardSelect').value),variant:$('variantSelect').value}));
 bindTexturePack('effect','/api/effects','请先选择含「效果贴图映射.json」的素材文件夹。',
   ()=>({cardId:Number($('effectSelect').value)||null}));
-$('artworkInput').onchange=()=>action(async()=>{const f=$('artworkInput').files[0];if(!f)return;message('正在保存立绘到本机项目…');project=await api(`/api/projects/${project.id}/artwork`,f,true);await openProject(project.id);});
+$('partImageButton').onclick=()=>$('partImageInput').click();
+$('partImageInput').onchange=()=>action(async()=>{
+  const input=$('partImageInput'),file=input.files[0];input.value='';if(!file)return;
+  await flushDrafts();message('正在保存当前部件的图片…');
+  Object.assign(part,await api(partApi('image')+`?name=${encodeURIComponent(file.name)}`,file,true));
+  await selectPart(project.currentPart,false);
+  message('部件图片已放入对齐框。可直接调整，也可先圈选要保留的像素。');
+});
+$('wholePartImageButton').onclick=()=>action(async()=>{
+  await flushDrafts();Object.assign(part,await api(partApi('whole-image'),{}));
+  await selectPart(project.currentPart,false);
+  message('已重新使用整张部件图，可在右侧调整位置和大小。');
+});
+$('artworkButton').onclick=()=>{
+  if(!artwork){$('artworkInput').click();return;}
+  return action(async()=>{
+    await flushDrafts();Object.assign(part,await api(partApi('use-artwork'),{}));
+    await selectPart(project.currentPart,false);
+    message('当前部件已改用项目立绘，请圈选要保留的像素。');
+  });
+};
+$('artworkInput').onchange=()=>action(async()=>{
+  const input=$('artworkInput'),file=input.files[0];input.value='';if(!file)return;
+  await flushDrafts();message('正在保存项目立绘…');
+  project=await api(`/api/projects/${project.id}/artwork`,file,true);
+  await openProject(project.id);
+  if(part.draftSource)message('已导入项目立绘。点击「改用整张立绘」可切换当前部件的来源。');
+});
 $('homeButton').onclick=()=>action(home);$('quitButton').onclick=()=>action(async()=>{if(!confirm('保存进度并关闭本机工作流服务？'))return;await flushDrafts();await api('/api/quit',{});document.body.innerHTML='<main style="padding:50px"><h1>工作流已关闭</h1><p>进度已保存在本机。下次双击入口即可继续。</p></main>';});
 function setMode(value,id){mode=value;polygon=[];for(const b of ['lassoButton','pointButton','samModeButton','manualBrushButton','shapeButton'])$(b).classList.toggle('active',b===id);$('shapeControls').hidden=value!=='shape';renderSource();}
 $('lassoButton').onclick=()=>setMode('lasso','lassoButton');$('pointButton').onclick=()=>{setMode('point','pointButton');message('点击部件内部：左键加入 SAM 预测区域，右键减去预测区域。点选不受套索/涂选范围限制。');};$('samModeButton').onclick=()=>{setMode('sam','samModeButton');message('涂满所需部位，松开后由本地 SAM 细化。左键添加，右键减去。');};$('manualBrushButton').onclick=()=>{setMode('manual','manualBrushButton');message('严格涂抹：直接使用涂抹区域，不调用 SAM。左键保留像素，右键清除像素；空白保持透明。');};
@@ -347,7 +418,8 @@ $('sourceZoomIn').onclick=()=>zoomSource(1.25);$('sourceZoomOut').onclick=()=>zo
 function zoomCutout(factor,actual=false){if(!cutout||busy)return;part.placement.width=actual?cutout.width:Math.max(1,part.placement.width*factor);part.placement.height=actual?cutout.height:Math.max(1,part.placement.height*factor);syncPlacement();renderAligned();queuePlacementSave();}
 $('cutoutZoomIn').onclick=()=>zoomCutout(1.1);$('cutoutZoomOut').onclick=()=>zoomCutout(1/1.1);$('cutoutActualSize').onclick=()=>zoomCutout(1,true);
 
-$('cutoutPercent').oninput=()=>{if(!cutout||busy)return;const value=Number($('cutoutPercent').value);if(!Number.isFinite(value)||value<.1||value>10000){return;}part.placement.width=cutout.width*value/100;part.placement.height=cutout.height*value/100;syncPlacement();renderAligned();queuePlacementSave();};
+$('cutoutPercent').oninput=()=>{if(!cutout||busy)return;const value=Number($('cutoutPercent').value);if(!Number.isFinite(value)||value<.1||value>10000){return;}part.placement.width=cutout.width*value/100;part.placement.height=cutout.height*value/100;syncPlacement(false);renderAligned();if(placementTimer)clearTimeout(placementTimer);placementTimer=setTimeout(()=>{placementTimer=null;queuePlacementSave()},350);};
+$('cutoutPercent').onchange=()=>syncPlacement();
 $('cutoutPercent').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('cutoutPercent').blur();}};
 $('gamePreviewButton').onclick=()=>action(async()=>{$('exportDialog').close();await window.openAnimationPreview(project.id,token);});
 
@@ -360,9 +432,6 @@ $('updateLibraryButton').onclick=()=>action(async()=>{const state=await api('/ap
 $('cancelLibraryButton').onclick=()=>action(()=>api('/api/library/cancel',{}));
 $('clearCacheButton').onclick=()=>action(async()=>{const result=await api('/api/library/cache/clear',{});message('已清理 '+result.removed+' 组未使用缓存；现有项目引用的素材已保留。');});
 
-$('completedBack').onclick=()=>$('completionDialog').close();
-$('completedPreview').onclick=()=>{$('completionDialog').close();action(()=>exportPackage(false));};
-$('completedExport').onclick=()=>{$('completionDialog').close();action(()=>exportPackage(true));};
 window.addEventListener('references-ready',()=>{if(project&&part)window.updatePartReferences(project.id,token,part);});
 
 // The shape stamp uses only the original visible silhouette, never its bounding rectangle.
@@ -387,6 +456,6 @@ $('partReferenceZoom').oninput=()=>{const n=+$('partReferenceZoom').value;if(n>=
 const partRefHost=$('partReferenceHost');partRefHost.onwheel=e=>{e.preventDefault();partReferenceView.scale=Math.max(.25,Math.min(4,partReferenceView.scale*(e.deltaY<0?1.1:1/1.1)));renderPartReference();};
 partRefHost.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();partRefHost.setPointerCapture(e.pointerId);partReferenceDrag={x:e.clientX,y:e.clientY,px:partReferenceView.x,py:partReferenceView.y};};partRefHost.onpointermove=e=>{if(!partReferenceDrag)return;partReferenceView.x=partReferenceDrag.px+e.clientX-partReferenceDrag.x;partReferenceView.y=partReferenceDrag.py+e.clientY-partReferenceDrag.y;renderPartReference();};partRefHost.onpointerup=partRefHost.onpointercancel=()=>partReferenceDrag=null;
 
-$('keepPendingButton').onclick=()=>action(async()=>{await flushDrafts();project=await api(`/api/projects/${project.id}/keep-pending`,{});await selectPart(project.currentPart);message('所有未确认部件已保留原图，已有替换不变。');$('completionDialog').showModal();});
+$('keepPendingButton').onclick=()=>action(async()=>{const current=project.currentPart;await flushDrafts();project=await api(`/api/projects/${project.id}/keep-pending`,{});await selectPart(current);message('其余部件已保留原图。需要回包时，点击「导出替换文件」。');});
 for(const id of ['tailLayerVisible','tailLayerOpacity'])$(id).oninput=renderSource;
 window.addEventListener('tail-layer-updated',renderSource);

@@ -27,7 +27,7 @@ public static class VariantSelfTest
         Check("包含实测游戏读取的376af1d5与7a54f4f4",fileIds.Contains("376af1d5")&&fileIds.Contains("7a54f4f4"));
         Check("原高清确认步骤和历史版本保持不变",store.Load(p.Id).Parts.Select(x=>x.ConfirmedRevision).SequenceEqual(revisionIds));
         Check("原游戏文件所有哈希均不变",before.All(f=>ProjectStore.Hash(f.Key)==f.Value));
-        Check("合并后的全部输出及原始备份哈希正确",report["Files"]!.AsArray().All(f=>ProjectStore.Hash(Path.Combine(folder,f!["Replacement"]!.GetValue<string>()))==f["ReplacementSha256"]!.GetValue<string>()&&ProjectStore.Hash(Path.Combine(folder,f["Backup"]!.GetValue<string>()))==f["OriginalSha256"]!.GetValue<string>()));
+        Check("合并后的替换文件完整",!Directory.Exists(Path.Combine(folder,"原文件备份"))&&report["Files"]!.AsArray().All(f=>ProjectStore.Hash(Path.Combine(folder,f!["Replacement"]!.GetValue<string>()))==f["ReplacementSha256"]!.GetValue<string>()));
         var batch=JsonNode.Parse(File.ReadAllText(Path.Combine(folder,"跨画质导出.json")))!;var model=batch["Models"]![0]!;
         var childRoot=Directory.GetFiles(Path.Combine(folder,"辅助构建"),"project.json",SearchOption.AllDirectories).Single();var child=JsonFile.Read<ProjectState>(childRoot);
         Check("高清到低清全部部件名称和UV可对应",child.Parts.Count==p.Parts.Count&&child.Parts.All(t=>p.Parts.Any(s=>s.Name==t.Name&&s.Slot==t.Slot&&s.Uvs.SequenceEqual(t.Uvs))));

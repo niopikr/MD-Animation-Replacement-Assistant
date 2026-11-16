@@ -1,6 +1,5 @@
 """Pack the verified card 14409 TCG summon dependency chain."""
 import copy
-from hashlib import sha256
 import json
 import ntpath
 from pathlib import Path
@@ -317,14 +316,12 @@ def extract_shared(game, model, target, force):
     return True
 
 
-def main(game, expected_hash, staging, output):
+def main(game, staging, output):
     required = {key: game / relative(key) for key in (*MODELS, SHARED, TIMELINE)}
     missing = [key for key, path in required.items() if not path.is_file()]
     if missing:
         raise ResourceError("游戏尚缺召唤资源：" + "、".join(missing) + "。请在游戏里载入该卡的召唤动画。")
     original = {key: path.read_bytes() for key, path in required.items()}
-    if sha256(original[SHARED]).hexdigest().lower() != expected_hash.lower():
-        raise ResourceError("读取后共享资源发生变化，请重新打包。")
     _, _, timeline = load(original[TIMELINE])
     _, _, shared = load(original[SHARED])
     clip = timeline.objects[5025005778889516634].read_typetree()["template"]
@@ -336,12 +333,9 @@ def main(game, expected_hash, staging, output):
         return False
     replacements = {SHARED: edited_shared}
     replacements.update({key: edit_model(key, original[key], external) for key in MODELS})
-    if any(path.read_bytes() != original[key] for key, path in required.items()):
-        raise ResourceError("打包期间游戏资源发生变化，请重试。")
     with ZipFile(output, "x", ZIP_STORED) as archive:
         for key, replacement in replacements.items():
             archive.writestr("替换/" + relative(key), replacement)
-            archive.writestr("原始/" + relative(key), original[key])
     with ZipFile(output) as archive:
         assert archive.testzip() is None
     return True
@@ -354,8 +348,8 @@ if __name__ == "__main__":
             if not extract_shared(Path(game), model, Path(staging), source == "shared"):
                 sys.exit(3)
         else:
-            game, digest, staging, output = sys.argv[1:]
-            if not main(Path(game), digest, Path(staging), Path(output)):
+            game, staging, output = sys.argv[1:]
+            if not main(Path(game), Path(staging), Path(output)):
                 sys.exit(3)
     except ResourceError as error:
         print(error)

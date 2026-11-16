@@ -23,7 +23,6 @@ internal static class SummonSharedPackage
         var game = ProjectStore.Under(settings.GameRoot, $"LocalData/{settings.Account}");
         var sharedPath = ProjectStore.Under(game, $"0000/29/{BundleId}");
         if (!File.Exists(sharedPath)) throw new FileNotFoundException("缺少 14409 的共享召唤资源，请先在游戏内下载这张卡的资源。");
-        var sharedHash = ProjectStore.Hash(sharedPath);
         var (originalSkeleton, originalAtlas) = ReadShared(sharedPath);
         if (mapping?.SourceBundle is { } bundle && bundle != BundleId)
             throw new InvalidDataException("召唤素材的来源与所选资源不匹配，请重新导出。");
@@ -65,11 +64,11 @@ internal static class SummonSharedPackage
         var output = work + ".zip";
         var label = Path.GetFileName(Path.GetDirectoryName(variant));
         var fileName = BulkLibrary.SafeComponent($"{card.Id}-{card.Name}-{label}-召唤替换") + ".zip";
-        (FileStream Content, string FileName, List<string> Repairs) CopyOriginals() =>
-            (SummonPackage.PackCurrentCopies(work, settings, Bundles, BundleId, sharedHash), fileName, []);
+        (FileStream Content, string FileName, List<string> Repairs) PackCurrent() =>
+            (SummonPackage.PackBundles(work, settings, Bundles, []), fileName, []);
         try
         {
-            if (!skeletonChanged && !textureChanged) return CopyOriginals();
+            if (!skeletonChanged && !textureChanged) return PackCurrent();
             var (skeleton, model, repairs) = SummonSkeleton.Prepare(skeletonChanged ? inputSkeleton! : originalSkeleton, originalSkeleton);
             File.WriteAllBytes(Path.Combine(work, "P14409.json"), skeleton);
             if (textureChanged)
@@ -82,8 +81,7 @@ internal static class SummonSharedPackage
                     {
                         if (!sameLayout) throw new FileNotFoundException("编辑后的 atlas 缺少同目录贴图：" + name);
                         image = ProjectStore.Under(reference, name);
-                        if (!File.Exists(image) || mapping?.Pages?.GetValueOrDefault(name) is { } hash &&
-                            !ProjectStore.Hash(image).Equals(hash, StringComparison.OrdinalIgnoreCase))
+                        if (!File.Exists(image))
                             throw new FileNotFoundException("请提供同一次导出的贴图页：" + name);
                     }
                     var size = RigbyExport.TextureSize(image);
@@ -107,15 +105,14 @@ internal static class SummonSharedPackage
             else
                 SummonSkeleton.CheckRegions(model, Atlas.Parse(Encoding.UTF8.GetString(originalAtlas)));
 
-            if (!Run(workspace, game, sharedHash, work, output)) return CopyOriginals();
+            if (!Run(workspace, game, work, output)) return PackCurrent();
             if (!File.Exists(output)) throw new InvalidDataException("未生成共享召唤替换包。");
             var stream = new FileStream(output, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.DeleteOnClose);
             try
             {
                 using (var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true))
                 {
-                    var entries = Bundles.SelectMany(id => new[] { "原始", "替换" }
-                        .Select(group => $"{group}/0000/{id[..2]}/{id}")).ToHashSet();
+                    var entries = Bundles.Select(id => $"替换/0000/{id[..2]}/{id}").ToHashSet();
                     if (zip.Entries.Count != entries.Count || zip.Entries.Any(e => e.Length == 0 || !entries.Remove(e.FullName)))
                         throw new InvalidDataException("共享召唤替换包缺少关联资源。");
                 }

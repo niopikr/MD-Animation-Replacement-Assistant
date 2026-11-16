@@ -47,29 +47,25 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
         foreach (var page in atlas.Pages.Keys)
             File.Copy(ProjectStore.Under(model, page), ProjectStore.Under(edited, page));
 
-        var (hashes, edits, _) = SummonPackage.Prepare(store, settings, card, source.Variant, source.SourceVersion,
+        var (bundleIds, edits, _) = SummonPackage.Prepare(store, settings, card, source.Variant, source.SourceVersion,
             sourceFolder, source.SkeletonFile, source.AtlasFile, edited, map, work, dependencies);
         var files = new List<object>();
-        using (var stream = SummonPackage.PackBundles(work, settings, hashes, hashes.Keys, edits))
+        using (var stream = SummonPackage.PackBundles(work, settings, bundleIds, edits))
         using (var zip = new System.IO.Compression.ZipArchive(stream, System.IO.Compression.ZipArchiveMode.Read))
         {
-            foreach (var id in hashes.Keys)
+            foreach (var entry in zip.Entries)
             {
-                var relative = $"0000/{id[..2]}/{id}";
-                var replacement = Extract("替换", "替换文件");
-                var backup = Extract("原始", "原文件备份");
-                files.Add(new { File = relative, Target = SummonPackage.GameBundlePath(settings, id),
-                    OriginalSha256 = hashes[id], ReplacementSha256 = ProjectStore.Hash(replacement),
-                    Backup = Path.GetRelativePath(folder, backup), Replacement = Path.GetRelativePath(folder, replacement) });
-                string Extract(string entry, string directory)
-                {
-                    var destination = ProjectStore.Under(folder, directory + "/" + relative);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    using var input = zip.GetEntry(entry + "/" + relative)!.Open();
-                    using var output = File.Create(destination);
+                const string prefix = "替换/";
+                if (!entry.FullName.StartsWith(prefix + "0000/", StringComparison.Ordinal))
+                    throw new InvalidDataException("召唤替换包目录无效。");
+                var relative = entry.FullName[prefix.Length..];
+                var replacement = ProjectStore.Under(Path.Combine(folder, "替换文件"), relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(replacement)!);
+                using (var input = entry.Open())
+                using (var output = File.Create(replacement))
                     input.CopyTo(output);
-                    return destination;
-                }
+                files.Add(new { File = relative, Target = SummonPackage.GameBundlePath(settings, entry.Name),
+                    ReplacementSha256 = ProjectStore.Hash(replacement), Replacement = Path.GetRelativePath(folder, replacement) });
             }
         }
         var companions = SummonDependencies.Companions(card, source.Variant).Select(SummonDependencies.Label).ToArray();
@@ -94,18 +90,7 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
                 var label=Path.GetFileName(Path.GetDirectoryName(variant))!;
                 var childStore=new ProjectStore(store.Workspace,Path.Combine(folder,"辅助构建",label));
                 var child=childStore.Create(new(source.CardId,variant));
-                if(child.SourceVersion!=source.SourceVersion)
-                {
-                    string[] Sources(string v)=>JsonNode.Parse(File.ReadAllText(Path.Combine(v,"manifest.json")))!["OriginalFiles"]!.AsArray().Select(a=>a!["BundleId"]!.GetValue<string>()+":"+a["Sha256"]!.GetValue<string>()).Order().ToArray();
-                    if(!Sources(child.SourceVersion).SequenceEqual(Sources(source.SourceVersion)))throw new InvalidDataException("游戏资源已更新，请在新版本重建项目后导出");
-                }
                 var childRoot=childStore.DirectoryFor(child.Id);var sourceRoot=store.DirectoryFor(source.Id);
-                // Recognize only this source project's recorded previous installs, including prior SD outputs.
-                foreach(var old in source.Exports)
-                {
-                    var oldReport=ProjectStore.Under(sourceRoot,old+"/替换清单.json");if(!File.Exists(oldReport))continue;
-                    var relative="known/"+child.Exports.Count;var target=ProjectStore.Under(childRoot,relative+"/替换清单.json");Directory.CreateDirectory(Path.GetDirectoryName(target)!);File.Copy(oldReport,target);child.Exports.Add(relative);
-                }
                 foreach(var targetPart in child.Parts)
                 {
                     var original=source.Parts.SingleOrDefault(p=>p.Slot==targetPart.Slot&&p.Name==targetPart.Name);
@@ -130,15 +115,12 @@ public sealed class VariantExportCoordinator(ProjectStore store,Exporter preview
                 var childResult=JsonSerializer.SerializeToNode(new GameReplacementExporter(childStore,new Exporter(childStore)).Export(child,compatible:true))!;
                 var childFolder=childResult["Folder"]!.GetValue<string>();
                 var childReport=JsonNode.Parse(File.ReadAllText(Path.Combine(childFolder,"替换清单.json")))!;
-                foreach(var category in new[]{"替换文件","原文件备份","替换前文件备份"})
+                var basePath=Path.Combine(childFolder,"替换文件");
+                foreach(var file in Directory.GetFiles(basePath,"*",SearchOption.AllDirectories))
                 {
-                    var basePath=Path.Combine(childFolder,category);if(!Directory.Exists(basePath))continue;
-                    foreach(var file in Directory.GetFiles(basePath,"*",SearchOption.AllDirectories))
-                    {
-                        var dest=ProjectStore.Under(folder,Path.Combine(category,Path.GetRelativePath(basePath,file)));Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                        if(File.Exists(dest)){if(ProjectStore.Hash(dest)!=ProjectStore.Hash(file))throw new InvalidDataException("不同画质导出共享同名Bundle且内容冲突");}
-                        else File.Copy(file,dest);
-                    }
+                    var dest=ProjectStore.Under(Path.Combine(folder,"替换文件"),Path.GetRelativePath(basePath,file));Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                    if(File.Exists(dest)){if(ProjectStore.Hash(dest)!=ProjectStore.Hash(file))throw new InvalidDataException("不同画质导出共享同名Bundle且内容冲突");}
+                    else File.Copy(file,dest);
                 }
                 foreach(var file in childReport["Files"]!.AsArray())if(!files.Any(f=>f!["File"]!.GetValue<string>()==file!["File"]!.GetValue<string>()))files.Add(file!.DeepClone());
                 var relativeModel="其他画质/"+label+"/游戏图集核对";var model=ProjectStore.Under(folder,relativeModel);Directory.CreateDirectory(model);

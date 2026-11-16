@@ -161,8 +161,8 @@ public static class SelfTest
         var replacementBundle=JsonSerializer.SerializeToNode(gameExporter.Export(opaqueProject))!;
         var gameFolder=replacementBundle["Folder"]!.GetValue<string>();
         var install=JsonNode.Parse(File.ReadAllText(Path.Combine(gameFolder,"替换清单.json")))!;
-        Check("真实游戏同名Bundle与备份生成并完成回读验证",replacementBundle["BundleCount"]!.GetValue<int>()==2&&install["Verified"]!.GetValue<bool>()&&File.Exists(Path.Combine(gameFolder,"替换文件完成标记.txt")));
-        Check("游戏原文件与备份SHA保持一致未安装",install["Files"]!.AsArray().All(f=>ProjectStore.Hash(f!["Target"]!.GetValue<string>())==f["OriginalSha256"]!.GetValue<string>()&&ProjectStore.Hash(Path.Combine(gameFolder,f["Backup"]!.GetValue<string>()))==f["OriginalSha256"]!.GetValue<string>()));
+        Check("真实游戏同名Bundle生成并完成回读验证",replacementBundle["BundleCount"]!.GetValue<int>()==2&&install["Verified"]!.GetValue<bool>()&&File.Exists(Path.Combine(gameFolder,"替换文件完成标记.txt")));
+        Check("替换文件完整且导出只含替换件",!Directory.Exists(Path.Combine(gameFolder,"原文件备份"))&&install["Files"]!.AsArray().All(f=>ProjectStore.Hash(Path.Combine(gameFolder,f!["Replacement"]!.GetValue<string>()))==f["ReplacementSha256"]!.GetValue<string>()));
         var packedAtlas=Atlas.Parse(File.ReadAllText(Path.Combine(gameFolder,"游戏图集核对",opaqueProject.AtlasFile)));
         var originalAtlas=Atlas.Parse(File.ReadAllText(Path.Combine(opaqueRoot,"source",opaqueProject.AtlasFile)));
         Check("游戏导出保留原Atlas页名称顺序及区域名称集合",packedAtlas.Pages.Keys.SequenceEqual(originalAtlas.Pages.Keys)&&packedAtlas.Regions.Keys.Order().SequenceEqual(originalAtlas.Regions.Keys.Order()));
@@ -177,7 +177,7 @@ public static class SelfTest
         var allEmptyProject=store.Create(new NewProjectRequest(21460,""));
         foreach(var pp in allEmptyProject.Parts)store.Confirm(allEmptyProject,pp,null,empty:true);
         var allEmptyPackage=JsonSerializer.SerializeToNode(gameExporter.Export(allEmptyProject))!;
-        Check("整套25部件可导出4个同名Bundle及原文件备份",allEmptyPackage["BundleCount"]!.GetValue<int>()==4);
+        Check("整套25部件可导出4个同名Bundle",allEmptyPackage["BundleCount"]!.GetValue<int>()==4);
         var emptyModel=Path.Combine(allEmptyPackage["Folder"]!.GetValue<string>(),"游戏图集核对");
         var fullAtlas=Atlas.Parse(File.ReadAllText(Path.Combine(emptyModel,allEmptyProject.AtlasFile)));
         var emptyRegions=true;

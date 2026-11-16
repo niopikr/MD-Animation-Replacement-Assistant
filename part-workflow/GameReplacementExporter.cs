@@ -22,7 +22,8 @@ public sealed class GameReplacementExporter(ProjectStore store, Exporter preview
         var version=Path.GetFullPath(p.SourceVersion);
         if(!version.StartsWith(Path.GetFullPath(library)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)&&!version.StartsWith(Path.GetFullPath(OnDemandLibrary.CacheRoot(store.Workspace))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("项目来源目录越界");
         var manifest=JsonNode.Parse(File.ReadAllText(Path.Combine(version,"manifest.json")))!;
-        var gameRoot=new InstallSettings(store.Workspace).Read().GameRoot;
+        var settings=new InstallSettings(store.Workspace).Read();
+        var gameRoot=settings.GameRoot;
         if(gameRoot.Length==0)throw new InvalidOperationException("请先在首页选择游戏目录。");
         var assets=manifest["Assets"]!.AsArray().Select(x=>x!).ToArray();
         var intended=manifest["CatalogVariants"]?.AsArray().FirstOrDefault(v=>v!["Variant"]!.GetValue<string>()==p.Variant)?["Atlas"]?["LogicalPath"]?.GetValue<string>();
@@ -35,27 +36,17 @@ public sealed class GameReplacementExporter(ProjectStore store, Exporter preview
         var pageAssets=changedPages.ToDictionary(n=>n,n=>assets.Single(a=>a["Asset"]!["Type"]!.GetValue<string>()=="Texture2D"&&
             a["Asset"]!["Name"]!.GetValue<string>()==Path.GetFileNameWithoutExtension(n)&&Path.GetDirectoryName(a["LogicalPath"]!.GetValue<string>())==family&&a["Sha256"]!.GetValue<string>()==p.SourceHashes[n]));
         var ids=pageAssets.Values.Select(a=>Locate(a).BundleId).Append(Locate(atlasAsset).BundleId).Distinct().ToArray();
+        var accountRoot=Path.Combine(gameRoot,"LocalData",settings.Account);
         var inputs=ids.Select(id=>{
             if(id.Length!=8||id.Any(c=>!Uri.IsHexDigit(c)))throw new InvalidDataException("无效Bundle名称");
             var original=manifest["OriginalFiles"]!.AsArray().Single(x=>x!["BundleId"]!.GetValue<string>()==id)!;
             var live=AppEnvironment.MapGamePath(store.Workspace,original["Path"]!.GetValue<string>());
-            var accountRoot=Path.Combine(gameRoot,"LocalData",new InstallSettings(store.Workspace).Read().Account);
             var relative=Path.GetRelativePath(accountRoot,live);
             if(!relative.Replace('\\','/').StartsWith("0000/",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("该资源不在所选账号的0000目录，无法生成此精简替换结构："+live);
             if(Path.GetFileName(live)!=id)throw new InvalidDataException("Bundle目标文件名不一致");
-            var archived=ProjectStore.Under(version,Path.Combine("游戏关联文件",id[..2],id));
-            var hash=original["Sha256"]!.GetValue<string>();
-            var liveHash=File.Exists(live)?ProjectStore.Hash(live):"";
-            var knownPrevious=compatible&&p.Exports.Any(e=>{
-                var record=ProjectStore.Under(store.DirectoryFor(p.Id),e+"/替换清单.json");if(!File.Exists(record))return false;
-                var prior=JsonNode.Parse(File.ReadAllText(record))!;
-                return prior["Files"]!.AsArray().Any(f=>f!["Target"]!.GetValue<string>()==live&&f["ReplacementSha256"]!.GetValue<string>()==liveHash);
-            });
-            if(!File.Exists(live)||(liveHash!=hash&&!knownPrevious)||ProjectStore.Hash(archived)!=hash)
-                throw new InvalidDataException("游戏原文件缺失或已不同于提取版本，请先更新素材库并新建项目："+live);
-            return new{Id=id,Relative=relative,Live=live,Archived=archived,Hash=hash,LiveHash=liveHash};
+            if(!File.Exists(live))throw new FileNotFoundException("当前账号缺少召唤文件："+relative);
+            return new{Id=id,Relative=relative,Live=live};
         }).ToArray();
-        // Work only in a fresh export. Original game files are opened read-only for backup and hash checks.
         var snapshot=JsonSerializer.SerializeToNode(preview.Export(p,true,gamePackage:true))!;
         var folder=snapshot["Folder"]!.GetValue<string>();var model=Path.Combine(folder,"游戏图集核对");Directory.CreateDirectory(model);
         File.Copy(Path.Combine(store.DirectoryFor(p.Id),"source",p.SkeletonFile),Path.Combine(model,p.SkeletonFile));
@@ -104,26 +95,25 @@ public sealed class GameReplacementExporter(ProjectStore store, Exporter preview
         var compatibilityChecks=new List<object>();
         foreach(var input in inputs)
         {
-            var backup=ProjectStore.Under(Path.Combine(folder,"原文件备份"),input.Relative);Directory.CreateDirectory(Path.GetDirectoryName(backup)!);File.Copy(input.Archived,backup);
-            if(ProjectStore.Hash(backup)!=input.Hash)throw new IOException("备份校验失败");
-            if(input.LiveHash!=input.Hash){var before=ProjectStore.Under(Path.Combine(folder,"替换前文件备份"),input.Relative);Directory.CreateDirectory(Path.GetDirectoryName(before)!);File.Copy(input.Live,before);if(ProjectStore.Hash(before)!=input.LiveHash)throw new IOException("替换前文件备份失败");}
-            var output=ProjectStore.Under(Path.Combine(folder,"替换文件"),input.Relative);Directory.CreateDirectory(Path.GetDirectoryName(output)!);File.Copy(backup,output);
+            var output=ProjectStore.Under(Path.Combine(folder,"替换文件"),input.Relative);Directory.CreateDirectory(Path.GetDirectoryName(output)!);File.Copy(input.Live,output);
             var bundleEdits=edits.Where(e=>e.Asset.BundleId==input.Id).ToArray();
-            if(compatible){if(bundleEdits.Length>0)compatibilityChecks.Add(CompatibleTexture.Rewrite(output,bundleEdits));}
-            else Rewrite(output,bundleEdits);
-            if(ProjectStore.Hash(input.Live)!=input.LiveHash)throw new IOException("导出期间原游戏文件发生变化，请重试");
-            records.Add(new{File=input.Relative,Target=input.Live,OriginalSha256=input.Hash,BeforeExportSha256=input.LiveHash,ReplacementSha256=ProjectStore.Hash(output),Backup=Path.GetRelativePath(folder,backup),Replacement=Path.GetRelativePath(folder,output)});
+            if(bundleEdits.Length>0)
+            {
+                if(compatible)compatibilityChecks.Add(CompatibleTexture.Rewrite(output,bundleEdits));
+                else Rewrite(output,bundleEdits);
+            }
+            records.Add(new{File=input.Relative,Target=input.Live,ReplacementSha256=ProjectStore.Hash(output),Replacement=Path.GetRelativePath(folder,output)});
         }
         JsonFile.Write(Path.Combine(folder,"替换清单.json"),new{Version=2,p.CardId,p.ChineseName,p.Variant,GameRoot=gameRoot,Files=records,Verified=true,CompatibleOriginalFormat=compatible,GameModified=false});
         if(compatible)JsonFile.Write(Path.Combine(folder,"原格式兼容验证.json"),new{AtlasByteIdentical=ProjectStore.Hash(Path.Combine(model,p.AtlasFile))==p.SourceHashes[p.AtlasFile],Checks=compatibilityChecks});
-        File.WriteAllText(Path.Combine(folder,"替换说明.txt"),$"{p.ChineseName}〔{p.CardId}〕\r\n适用版本/画质：{p.Variant}\r\n\r\n关闭游戏。将 替换文件 内的目录结构合并复制到：\r\n{Path.Combine(gameRoot,"LocalData",new InstallSettings(store.Workspace).Read().Account)}\r\n同名文件选择替换。不要把整个项目目录复制进游戏。\r\n\r\n恢复：关闭游戏，将 原文件备份 内的目录结构复制回上述账号目录并替换。\r\n原文件备份为提取时保留的游戏文件快照（可能含此前安装的修改）；已安装旧包时另存替换前文件备份。SHA-256见替换清单.json。\r\n本程序只生成文件，未安装到游戏。只针对所选地区/画质；其他画质不会自动改变。游戏更新可能恢复资源。\r\n已完成Bundle重新读取、Texture2D像素、Atlas内容和其他对象字节验证；仍需游戏内确认动作显示。\r\n",new UTF8Encoding(true));
+        File.WriteAllText(Path.Combine(folder,"替换说明.txt"),$"{p.ChineseName}〔{p.CardId}〕\r\n适用版本/画质：{p.Variant}\r\n\r\n关闭游戏，将「替换文件」中的 0000 合并到：\r\n{accountRoot}\r\n同名文件选择替换。请在游戏内播放确认效果。\r\n",new UTF8Encoding(true));
         File.Copy(Path.Combine(folder,"先看这里.txt"),Path.Combine(folder,"动画模型","预览说明.txt"));
         File.Copy(Path.Combine(folder,"替换说明.txt"),Path.Combine(folder,"先看这里.txt"),true);
         var report=JsonNode.Parse(File.ReadAllText(Path.Combine(folder,"导出记录.json")))!;
-        report["PackageType"]="游戏同名Bundle替换文件，附原文件备份及辅助Spine预览";
+        report["PackageType"]="游戏同名Bundle替换文件";
         report["GameReplacementReport"]="替换清单.json";report["GameBundlesVerified"]=true;
         File.WriteAllText(Path.Combine(folder,"导出记录.json"),report.ToJsonString(JsonFile.Options));
-        File.WriteAllText(Path.Combine(folder,"替换文件完成标记.txt"),"同名Bundle与原文件备份均已生成并验证。\r\n");
+        File.WriteAllText(Path.Combine(folder,"替换文件完成标记.txt"),"同名Bundle已生成并验证。\r\n");
         return new{Folder=folder,Relative=snapshot["Relative"]!.GetValue<string>(),Config=snapshot["Config"]!.GetValue<string>(),Changes=p.Parts.Count(x=>x.Status is "replaced" or "empty"),BundleCount=records.Count,IsFinal=true};
     }
     static void Copy(Image<Rgba32> source,Image<Rgba32> target,int dx,int dy){for(var y=0;y<source.Height;y++)for(var x=0;x<source.Width;x++)target[x+dx,y+dy]=source[x,y];}

@@ -38,6 +38,7 @@ public sealed class ProjectState
     public string Variant { get; set; } = "";
     public string SpineVersion { get; set; } = "";
     public string SourceVersion { get; set; } = "";
+    public bool IsEffect { get; set; }
     public string SkeletonFile { get; set; } = "";
     public string AtlasFile { get; set; } = "";
     public string Artwork { get; set; } = "";
@@ -72,6 +73,8 @@ public sealed class Part
     public string Status { get; set; } = "pending";
     public string ConfirmedRevision { get; set; } = "";
     public List<string> Revisions { get; set; } = [];
+    public string DraftSource { get; set; } = "";
+    public string DraftSourceName { get; set; } = "";
     public string DraftMask { get; set; } = "";
     public string DraftCutout { get; set; } = "";
     public Placement Placement { get; set; } = new();
@@ -91,6 +94,8 @@ public sealed class Placement
 public sealed class Revision
 {
     public string Kind { get; set; } = "replaced";
+    public string Source { get; set; } = "";
+    public string SourceName { get; set; } = "";
     public string Mask { get; set; } = "";
     public string Cutout { get; set; } = "";
     public string Aligned { get; set; } = "";
@@ -102,7 +107,7 @@ public sealed record CardChoice(int Id, string Name, string VersionFolder, strin
 public sealed record NewProjectRequest(int CardId, string Variant);
 public sealed record SelectionRequest(string Mask);
 public sealed record ConfirmRequest(string Image, Placement Placement);
-public sealed record SamRequest(string Mask, float[][] Points, bool LimitToHint = false);
+public sealed record SamRequest(string Mask, float[][] Points, bool LimitToHint = false, int? PartNumber = null);
 public sealed record StepRequest(int Number);
 public sealed record RestoreRequest(string Revision);
 

@@ -16,20 +16,19 @@ internal sealed record EffectDependency(string Bundle, string BundleSha256);
 internal sealed record EffectTarget(string Bundle, string BundleSha256, int FileIndex, long PathId, string Name,
     EffectDependency[]? Via = null);
 internal sealed record EffectPage(string File, string OriginalPngSha256, int Width, int Height, int Format, int Mips, EffectTarget[] Targets);
-internal sealed record EffectMap(string Format, int CardId, string Name, EffectPage[] Pages);
-internal sealed record EffectFolderRequest(string Folder, int? CardId = null);
+internal sealed record EffectNativeModel(string Model, string Group, string JsonSha256, string AtlasSha256, EffectTarget Skeleton, EffectTarget Atlas);
+internal sealed record EffectMap(string Format, int CardId, string Name, EffectPage[] Pages, EffectNativeModel[]? NativeModels = null);
+internal sealed record EffectFolderRequest(string Folder, int? CardId = null, SummonConversion? Conversion = null);
 
 internal static class EffectPackage
 {
     internal const string MapName = "效果贴图映射.json";
     internal const string MapFormat = "md-unity-effect-textures-v1";
-    private static readonly Regex BundlePath = new(@"^0000/([0-9a-f]{2})/([0-9a-f]{8})$", RegexOptions.IgnoreCase);
-    private static readonly Regex Sha = new(@"^[0-9a-f]{64}$", RegexOptions.IgnoreCase);
+    internal static readonly Regex BundlePath = new(@"^0000/([0-9a-f]{2})/([0-9a-f]{8})$", RegexOptions.IgnoreCase);
+    internal static readonly Regex Sha = new(@"^[0-9a-f]{64}$", RegexOptions.IgnoreCase);
 
-    internal static (FileStream Content, string FileName) Pack(string workspace, GameSettings settings, string directory, int? cardId = null)
+    internal static (string Folder, EffectMap Map) ReadFolder(string directory, int? cardId)
     {
-        if (string.IsNullOrWhiteSpace(settings.GameRoot) || string.IsNullOrWhiteSpace(settings.Account))
-            throw new InvalidOperationException("请先在首页应用游戏目录和账号。");
         if (string.IsNullOrWhiteSpace(directory)) throw new InvalidDataException("请先选择效果素材文件夹。");
         var folder = Path.GetFullPath(directory.Trim().Trim('"'));
         var mapPath = Path.Combine(folder, MapName);
@@ -51,13 +50,24 @@ internal static class EffectPackage
                 !Sha.IsMatch(page.OriginalPngSha256) || page.Targets is not { Length: > 0 and <= 64 })
                 throw new InvalidDataException("效果素材清单含无效贴图记录。");
         }
+        return (folder, map);
+    }
+
+    internal static (FileStream Content, string FileName) Pack(string workspace, GameSettings settings, string directory,
+        int? cardId = null, SummonConversion? conversion = null, IReadOnlySet<string>? projectPages = null)
+    {
+        if (string.IsNullOrWhiteSpace(settings.GameRoot) || string.IsNullOrWhiteSpace(settings.Account))
+            throw new InvalidOperationException("请先在首页应用游戏目录和账号。");
+        var (folder, map) = ReadFolder(directory, cardId);
         var cache = AppEnvironment.Runtime(workspace);
         var work = Path.Combine(cache, $"effect-pack-{Guid.NewGuid():N}");
         Directory.CreateDirectory(work);
         try
         {
             var prepared = EffectAtlasEdits.Prepare(folder, work, map.Pages);
-            return PackPrepared(work, settings, folder, map, prepared);
+            var (motion, dependencies) = conversion is null ? ([], Array.Empty<string>()) :
+                EffectSpine.CreateEdits(workspace, work, folder, settings, map, conversion, prepared);
+            return PackPrepared(work, settings, folder, map, prepared, motion, dependencies, projectPages);
         }
         finally
         {
@@ -65,32 +75,40 @@ internal static class EffectPackage
         }
     }
 
-    private static (FileStream Content, string FileName) PackPrepared(string work, GameSettings settings, string folder, EffectMap map, Dictionary<string, string> prepared)
+    private static (FileStream Content, string FileName) PackPrepared(string work, GameSettings settings, string folder,
+        EffectMap map, Dictionary<string, string> prepared, List<(EffectTarget Target, byte[] Data)> motion,
+        string[] dependencies,
+        IReadOnlySet<string>? projectPages)
     {
-        var edits = new Dictionary<string, List<(EffectPage Page, EffectTarget Target, string Png)>>(StringComparer.OrdinalIgnoreCase);
+        var edits = new Dictionary<string, List<(EffectPage Page, EffectTarget Target, string? Png)>>(StringComparer.OrdinalIgnoreCase);
         var dependencyChecks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var page in map.Pages)
         {
+            if (projectPages is not null && !projectPages.Contains(page.File)) continue;
             var png = prepared.GetValueOrDefault(page.File) ?? ProjectStore.Under(folder, page.File);
             if (!File.Exists(png)) continue;
-            if (ProjectStore.Hash(png).Equals(page.OriginalPngSha256, StringComparison.OrdinalIgnoreCase)) continue;
+            var modified = !ProjectStore.Hash(png).Equals(page.OriginalPngSha256, StringComparison.OrdinalIgnoreCase);
+            if (!modified && projectPages is null) continue;
             if (new FileInfo(png).Length > 128 * 1024 * 1024)
                 throw new InvalidDataException("PNG 文件过大：" + page.File);
             foreach (var target in page.Targets)
             {
                 var path = BundlePath.Match(target.Bundle);
                 if (!path.Success || !path.Groups[2].Value.StartsWith(path.Groups[1].Value, StringComparison.OrdinalIgnoreCase) ||
-                    !Sha.IsMatch(target.BundleSha256) || target.FileIndex is < 0 or > 64 || string.IsNullOrWhiteSpace(target.Name) ||
+                    target.FileIndex is < 0 or > 64 || string.IsNullOrWhiteSpace(target.Name) ||
                     target.Via is { Length: > 8 })
                     throw new InvalidDataException("效果素材清单含无效 Bundle 定位记录。");
                 if (target.Via is { Length: > 0 } via &&
-                    dependencyChecks.Add(string.Join('|', via.Select(x => x.Bundle + ":" + x.BundleSha256).Append(target.Bundle))))
+                    dependencyChecks.Add(string.Join('|', via.Select(x => x.Bundle).Append(target.Bundle))))
                     CheckDependencies(settings, map.CardId, via, target.Bundle);
                 if (!edits.TryGetValue(target.Bundle, out var group)) edits.Add(target.Bundle, group = []);
-                group.Add((page, target, png));
+                group.Add((page, target, modified ? png : null));
             }
         }
-        if (edits.Count == 0) throw new InvalidDataException("没有找到改动的 PNG。请保留导出时的文件名和尺寸。");
+        var text = motion.ToLookup(entry => entry.Target.Bundle, StringComparer.OrdinalIgnoreCase);
+        var bundles = edits.Keys.Concat(text.Select(group => group.Key))
+            .Concat(dependencies.Select(id => $"0000/{id[..2]}/{id}")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (bundles.Length == 0) throw new InvalidDataException("没有找到改动的 PNG。请保留导出时的文件名和尺寸。");
 
         var resultPath = work + ".zip";
         var stream = new FileStream(resultPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read, 65536, FileOptions.DeleteOnClose);
@@ -99,26 +117,33 @@ internal static class EffectPackage
         {
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
             {
-                foreach (var (bundle, group) in edits)
+                foreach (var bundle in bundles)
                 {
+                    var group = edits.GetValueOrDefault(bundle) ?? [];
+                    var textEdits = text[bundle].ToArray();
+                    var targets = group.Select(entry => entry.Target).Concat(textEdits.Select(entry => entry.Target)).ToArray();
+                    var id = Path.GetFileName(bundle);
                     var source = ProjectStore.Under(settings.GameRoot, $"LocalData/{settings.Account}/{bundle}");
-                    if (!File.Exists(source)) throw new FileNotFoundException("当前账号没有对应的原始效果 Bundle：" + bundle);
-                    var expected = group[0].Target.BundleSha256;
-                    if (group.Any(x => !x.Target.BundleSha256.Equals(expected, StringComparison.OrdinalIgnoreCase)) ||
-                        group.Select(x => (x.Target.FileIndex, x.Target.PathId)).Distinct().Count() != group.Count)
+                    if (!File.Exists(source)) throw new FileNotFoundException("当前账号没有对应的效果 Bundle：" + bundle);
+                    if (targets.Select(x => (x.FileIndex, x.PathId)).Distinct().Count() != targets.Length)
                         throw new InvalidDataException("效果清单存在重复或冲突的 Bundle 记录。");
-                    var backup = Path.Combine(work, Path.GetFileName(bundle) + ".original");
-                    File.Copy(source, backup);
-                    if (!ProjectStore.Hash(backup).Equals(expected, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("游戏 Bundle 已变化或已安装其他修改，请先恢复原包或重新提取：" + bundle);
-                    var replacement = Path.Combine(work, Path.GetFileName(bundle) + ".replacement");
-                    foreach (var entry in group)
-                        if (!encodedPages.ContainsKey(entry.Png))
-                            encodedPages[entry.Png] = Encode(entry.Page, entry.Png);
-                    Rewrite(backup, replacement, map.CardId, group.Select(x => (x.Page, x.Target, Bytes: encodedPages[x.Png])).ToArray());
-                    if (!ProjectStore.Hash(source).Equals(expected, StringComparison.OrdinalIgnoreCase))
-                        throw new IOException("打包期间游戏效果资源发生变化，请重试：" + bundle);
-                    zip.CreateEntryFromFile(backup, "原始/" + bundle, CompressionLevel.NoCompression);
+                    var bindings = Path.Combine(work, id + ".bindings");
+                    var replacement = File.Exists(bindings) ? bindings : source;
+                    var pixelEdits = group.Where(entry => entry.Png is not null).ToArray();
+                    if (pixelEdits.Length > 0 || textEdits.Length > 0)
+                    {
+                        var edited = Path.Combine(work, id + ".replacement");
+                        foreach (var entry in pixelEdits)
+                            if (!encodedPages.ContainsKey(entry.Png!))
+                                encodedPages[entry.Png!] = Encode(entry.Page, entry.Png!);
+                        if (pixelEdits.Length > 0)
+                            Rewrite(replacement, edited, map.CardId, pixelEdits.Select(x => (x.Page, x.Target, Bytes: encodedPages[x.Png!])).ToArray());
+                        else File.Copy(replacement, edited);
+                        replacement = edited;
+                        if (textEdits.Length > 0)
+                            GameReplacementExporter.Rewrite(replacement, textEdits.Select(x => new GameReplacementExporter.Edit(
+                                new(Path.GetFileName(bundle), x.Target.FileIndex, x.Target.PathId, x.Target.Name, "TextAsset"), null, x.Data)).ToArray());
+                    }
                     zip.CreateEntryFromFile(replacement, "替换/" + bundle, CompressionLevel.NoCompression);
                 }
             }
@@ -143,12 +168,10 @@ internal static class EffectPackage
             {
                 var entry = via[i];
                 var match = BundlePath.Match(entry.Bundle);
-                if (!match.Success || !match.Groups[2].Value.StartsWith(match.Groups[1].Value, StringComparison.OrdinalIgnoreCase) ||
-                    !Sha.IsMatch(entry.BundleSha256))
+                if (!match.Success || !match.Groups[2].Value.StartsWith(match.Groups[1].Value, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("效果依赖记录无效。");
                 var file = ProjectStore.Under(settings.GameRoot, $"LocalData/{settings.Account}/{entry.Bundle}");
-                if (!File.Exists(file) || !ProjectStore.Hash(file).Equals(entry.BundleSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("效果依赖文件已变化，请重新提取：" + entry.Bundle);
+                if (!File.Exists(file)) throw new FileNotFoundException("缺少效果依赖文件：" + entry.Bundle);
                 var next = i + 1 < via.Length ? via[i + 1].Bundle : target;
                 var nextId = Path.GetFileName(next);
                 var bundle = manager.LoadBundleFile(file, true);
@@ -175,7 +198,7 @@ internal static class EffectPackage
         finally { manager.UnloadAll(); }
     }
 
-    private static bool HasEffectContainer(AssetTypeValueField descriptor, int cardId)
+    internal static bool HasEffectContainer(AssetTypeValueField descriptor, int cardId)
     {
         var effectPath = new Regex($@"/duel/timeline/card/(?:.*?/)?ef0*{cardId}/", RegexOptions.IgnoreCase);
         return descriptor["m_Container"]["Array"].Children.Any(entry => effectPath.IsMatch(entry["first"].AsString));

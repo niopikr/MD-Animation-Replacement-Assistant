@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace PartWorkflow;
 
@@ -21,8 +22,15 @@ internal static class EffectAtlasEdits
         if (!File.Exists(originalPath))
             throw new InvalidDataException("Rigby2D 导出的 atlas 请沿用原模型的文件名：" + Path.GetFileName(editedPath));
 
+        return Transfer(folder, rigbyFolder, originalPath, editedPath, work, pageSizes);
+    }
+
+    internal static Dictionary<string, string> Transfer(string folder, string editedFolder, string originalPath, string editedPath,
+        string work, Dictionary<string, (int Width, int Height)> pageSizes, bool resize = false, string? compareOriginal = null)
+    {
         var original = Atlas.Parse(File.ReadAllText(originalPath));
         var edited = Atlas.Parse(File.ReadAllText(editedPath));
+        var reference = compareOriginal is null ? null : Atlas.Parse(File.ReadAllText(compareOriginal));
         var sources = new Dictionary<string, Image<Rgba32>>(StringComparer.OrdinalIgnoreCase);
         var inputs = new Dictionary<string, Image<Rgba32>>(StringComparer.OrdinalIgnoreCase);
         var destinations = new Dictionary<string, Image<Rgba32>>(StringComparer.OrdinalIgnoreCase);
@@ -39,13 +47,30 @@ internal static class EffectAtlasEdits
                 if (!pageSizes.TryGetValue(before.Page, out var page))
                     throw new InvalidDataException("原图集包含未映射的贴图页：" + before.Page);
                 var originalPage = LoadPage(sources, folder, before.Page, page);
-                var modifiedPage = LoadPage(inputs, rigbyFolder, after.Page, null);
+                var modifiedPage = LoadPage(inputs, editedFolder, after.Page, null);
                 original.FitToTexture(before, originalPage.Width, originalPage.Height);
                 edited.FitToTexture(after, modifiedPage.Width, modifiedPage.Height);
-                if ((before.Width, before.Height) != (after.Width, after.Height))
+                using var newPixels = Atlas.Extract(modifiedPage, after);
+                if (reference is not null && reference.Regions.ContainsKey(name))
+                {
+                    var prior = reference.MakePart(0, name, name, new JsonObject());
+                    var sourcePage = LoadPage(sources, folder, prior.Page, pageSizes[prior.Page]);
+                    reference.FitToTexture(prior, sourcePage.Width, sourcePage.Height);
+                    using var basePixels = Atlas.Extract(sourcePage, prior);
+                    using var comparable = newPixels.Clone();
+                    if (prior.Pma != after.Pma)
+                    {
+                        if (prior.Pma) Atlas.ToPma(comparable);
+                        else Atlas.ToStraight(comparable);
+                    }
+                    if ((basePixels.Width, basePixels.Height) == (comparable.Width, comparable.Height) &&
+                        SameVisiblePixels(basePixels, comparable)) { count++; continue; }
+                }
+                if (!resize && (before.Width, before.Height) != (after.Width, after.Height))
                     throw new InvalidDataException("Rigby2D 部件画布尺寸改变，请保持原尺寸：" + name);
                 using var oldPixels = Atlas.Extract(originalPage, before);
-                using var newPixels = Atlas.Extract(modifiedPage, after);
+                if ((newPixels.Width, newPixels.Height) != (before.Width, before.Height))
+                    newPixels.Mutate(image => image.Resize(before.Width, before.Height));
                 if (after.Pma != before.Pma)
                 {
                     if (before.Pma) Atlas.ToPma(newPixels);

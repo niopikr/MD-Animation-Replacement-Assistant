@@ -12,6 +12,7 @@ window.openAnimationPreview = async function(id, token) {
   async function read(url,json=true){const r=await fetch(url,{headers:{'X-Workflow-Token':token}});if(!r.ok)throw Error('预览素材读取失败 '+r.status);return json?r.json():r.text();}
   const info=await read(`/api/projects/${id}/preview-model`);
   const [json,atlasText]=await Promise.all([read(info.skeletonUrl),read(info.atlasUrl,false)]);
+  if(info.isEffect&&!Object.keys(json.animations??{}).length)json.animations={'静态参考':{}};
   const {skeleton:sk,warnings}=readSkeletonJson(json);
   const images=new Map(await Promise.all(info.pages.map(async p=>{const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(Error('贴图页读取失败 '+p.name));img.src=p.url;});return[p.name,img];})));
   const gl=canvas.getContext('webgl',{alpha:true,premultipliedAlpha:false});if(!gl)throw Error('浏览器未提供 WebGL，请在支持 WebGL 的浏览器打开。');
@@ -49,10 +50,12 @@ window.openAnimationPreview = async function(id, token) {
 // Tail layer is rendered separately and never enters the selection mask.
 let referenceScenePromise,referenceProject,referenceGeneration=0,selectedReferencePart;
 let referenceView={zoom:1,x:0,y:0};
-async function loadFrameScene(id,token,original=true,revision=''){
+async function loadFrameScene(id,token){
  async function read(url,json=true){const r=await fetch(url,{headers:{'X-Workflow-Token':token}});if(!r.ok)throw Error('动画素材读取失败 '+r.status);return json?r.json():r.text();}
- const info=await read(`/api/projects/${id}/preview-model?original=${original}${revision?'&revision='+encodeURIComponent(revision):''}`);
- const [json,text]=await Promise.all([read(info.skeletonUrl),read(info.atlasUrl,false)]),{skeleton:sk}=readSkeletonJson(json),pose=new Pose(sk);
+ const info=await read(`/api/projects/${id}/preview-model?original=true`);
+ const [json,text]=await Promise.all([read(info.skeletonUrl),read(info.atlasUrl,false)]);
+ if(info.isEffect&&!Object.keys(json.animations??{}).length)json.animations={'静态参考':{}};
+ const {skeleton:sk}=readSkeletonJson(json),pose=new Pose(sk);
  const images=new Map(await Promise.all(info.pages.map(async p=>{const img=new Image();await new Promise((ok,no)=>{img.onload=ok;img.onerror=()=>no(Error('贴图读取失败'));img.src=p.url;});return[p.name,img];})));
  const canvas=document.createElement('canvas');canvas.width=1024;canvas.height=768;
  const gl=canvas.getContext('webgl',{alpha:true,premultipliedAlpha:true});if(!gl)throw Error('尾帧图层需要WebGL');
@@ -61,15 +64,30 @@ async function loadFrameScene(id,token,original=true,revision=''){
  const sample=t=>{pose.reset(sk);pose.apply(sk,animation,t,1);pose.updateWorld(sk);};
  function bounds(){let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;for(let n=0;n<=24;n++){sample(animation.duration*n/24);for(const q of pose.quads(sk))for(const [x,y] of q.positions){if(!Number.isFinite(x+y))continue;x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);}}return Number.isFinite(x0)?{x:(x0+x1)/2,y:(y0+y1)/2,zoom:.85*Math.min(1024/Math.max(1,x1-x0),768/Math.max(1,y1-y0))}:{x:0,y:0,zoom:1};}
  let camera=bounds();
+ function referenceTime(part){
+  if(!info.isEffect||info.previewVariant?.includes('原生 Spine'))return animation.duration;
+  const frames=Math.max(1,Math.ceil(animation.duration*(json.skeleton?.fps||60)));
+  let fallback=null;
+  for(let i=frames;i>=0;i--){
+   const time=animation.duration*i/frames;
+   sample(time);
+   const visible=pose.quads(sk).filter(q=>q.color[3]>.01);
+   if(!visible.length)continue;
+   fallback??=time;
+   if(!part||visible.some(q=>sk.slots[q.slot]?.name===part.slot&&q.attachment.name===part.name))return time;
+  }
+  return fallback??animation.duration;
+ }
  return {sk,dispose(){gl.getExtension('WEBGL_lose_context')?.loseContext();},select(name){animation=sk.animations.find(a=>a.name===name)||sk.animations[0];camera=bounds();},get duration(){return animation.duration;},draw(target,part=null,view={zoom:1,x:0,y:0},highlight=false){
   const cam={x:camera.x-view.x/(camera.zoom*view.zoom),y:camera.y+view.y/(camera.zoom*view.zoom),zoom:camera.zoom*view.zoom};
-  sample(animation.duration);for(const color of pose.color)color[3]=1;
+  const time=referenceTime(part);
+  sample(time);for(const color of pose.color)color[3]=1;
   gl.viewport(0,0,1024,768);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);renderer.begin(1024,768,cam);renderer.drawSkeleton(sk,pose,lookup);renderer.end();
   target.width=1024;target.height=768;const c=target.getContext('2d');c.drawImage(canvas,0,0);
   const quads=part?pose.quads(sk).filter(q=>sk.slots[q.slot]?.name===part.slot&&q.attachment.name===part.name):[];
   c.fillStyle='rgba(255,32,56,.6)';c.strokeStyle='#fff267';c.lineWidth=1.5;
   if(highlight)for(const q of quads){const indices=q.kind==='mesh'?q.triangles:[0,1,2,0,2,3];c.beginPath();for(let i=0;i<indices.length;i+=3){for(let n=0;n<3;n++){const p=q.positions[indices[i+n]];if(!p)continue;const x=512+(p[0]-cam.x)*cam.zoom,y=384-(p[1]-cam.y)*cam.zoom;n?c.lineTo(x,y):c.moveTo(x,y);}c.closePath();}c.fill();c.stroke();}
-  target.dataset.zoom=view.zoom;target.dataset.panX=view.x;target.dataset.panY=view.y;target.dataset.highlighted=quads.length;target.dataset.part=part?.name||'';target.dataset.time=animation.duration;target.dataset.ready='true';return quads.length;
+  target.dataset.zoom=view.zoom;target.dataset.panX=view.x;target.dataset.panY=view.y;target.dataset.highlighted=quads.length;target.dataset.part=part?.name||'';target.dataset.time=time;target.dataset.ready='true';return quads.length;
  }};
 }
 window.updatePartReferences=async function(id,token,part){
@@ -80,7 +98,9 @@ window.updatePartReferences=async function(id,token,part){
   const scene=await referenceScenePromise;if(generation!==referenceGeneration||!document.getElementById('tailFrameReference'))return;
   const select=document.getElementById('referenceAnimation');if(select.dataset.project!==id){select.replaceChildren(...scene.sk.animations.map(a=>new Option(a.name,a.name)));select.dataset.project=id;select.onchange=()=>{scene.select(select.value);redrawReferences();};}
   const count=scene.draw(target,part,referenceView,document.getElementById('tailLayerHighlight').checked);
-  status.textContent=`尾帧 ${scene.duration.toFixed(3)}秒 · 当前部件：${part.label}（${part.name}）。${count?'':'尾帧未挂载此附件。'}`;
+  const time=Number(target.dataset.time);
+  const frame=time<scene.duration-0.0001?'最后可见帧':'尾帧';
+  status.textContent=`${frame} ${time.toFixed(3)} 秒 · 当前部件：${part.label}（${part.name}）。${count?'':'此帧未挂载该部件。'}`;
   window.dispatchEvent(new Event('tail-layer-updated'));
  }catch(e){if(generation!==referenceGeneration)return;referenceScenePromise=null;referenceProject=null;target.dataset.ready='false';status.textContent='尾帧不可用：'+e.message;window.dispatchEvent(new Event('tail-layer-updated'));}
 };
@@ -90,5 +110,4 @@ window.zoomTailReference=factor=>{referenceView.zoom=Math.max(.25,Math.min(4,ref
 document.getElementById('referenceZoom').oninput=e=>{const n=+e.target.value;if(n>=25&&n<=400){referenceView.zoom=n/100;redrawReferences();}};
 document.getElementById('referenceFit').onclick=()=>{referenceView={zoom:1,x:0,y:0};document.getElementById('referenceZoom').value=100;redrawReferences();};
 document.getElementById('tailLayerHighlight').onchange=redrawReferences;
-window.renderExportTailFrame=async function(id,token,revision){const scene=await loadFrameScene(id,token,false,revision);try{scene.select(document.getElementById('referenceAnimation').value);const target=document.createElement('canvas');scene.draw(target);return target.toDataURL('image/png');}finally{scene.dispose();}};
 window.dispatchEvent(new Event('references-ready'));

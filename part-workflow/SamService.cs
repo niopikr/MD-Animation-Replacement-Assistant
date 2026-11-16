@@ -13,12 +13,13 @@ public sealed class SamService(ProjectStore store) : IDisposable
     public string ModelDirectory { get {var path=Path.Combine(store.Workspace,"资源","models","sam2");return File.Exists(Path.Combine(path,Sam2PointCutoutService.Sam21EncoderFileName))&&File.Exists(Path.Combine(path,Sam2PointCutoutService.Sam21DecoderFileName))?path:"";} }
     public async Task<byte[]> Predict(ProjectState state, SamRequest request)
     {
+        var part = request.PartNumber is int number ? state.Parts.Single(p => p.Number == number) : null;
+        var artPath = store.ArtworkPath(state, part);
         await _gate.WaitAsync();
         try
         {
-            if (ModelDirectory.Length == 0) throw new InvalidOperationException("未找到本地 SAM 2.1 模型，仍可使用套索。不会自动下载模型。");
+            if (ModelDirectory.Length == 0) throw new InvalidOperationException("未找到本地 SAM 2.1 模型，可使用严格涂抹。");
             _sam ??= new Sam2PointCutoutService(ModelDirectory);
-            var artPath = ProjectStore.Under(store.DirectoryFor(state.Id), state.Artwork);
             if (_imagePath != artPath)
             {
                 _image?.Dispose(); _image = null; _imagePath = "";

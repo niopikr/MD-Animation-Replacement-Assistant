@@ -39,9 +39,7 @@ public static class OnDemandLibrary
                 foreach(var group in selected.GroupBy(a=>a.BundleId))
                 {
                     if(!live.TryGetValue(group.Key,out var input))throw new FileNotFoundException("当前账号尚未下载所选动画资源，请先在游戏中查看这张卡，或选择另一画质："+group.Key);
-                    var original=ProjectStore.Under(cache,Path.Combine("游戏关联文件",group.Key[..2],group.Key));Directory.CreateDirectory(Path.GetDirectoryName(original)!);
-                    if(!File.Exists(original)){File.Copy(input.Path,original);if(ProjectStore.Hash(original)!=input.Digest.Sha256)throw new IOException("提取时游戏资源发生变化，请重试");}
-                    var bundle=manager.LoadBundleFile(original,true);
+                    var bundle=manager.LoadBundleFile(input.Path,true);
                     foreach(var item in group)
                     {
                         var af=manager.LoadAssetsFileFromBundle(bundle,item.Asset.FileIndex,false);manager.LoadClassDatabaseFromPackage(af.file.Metadata.UnityVersion);

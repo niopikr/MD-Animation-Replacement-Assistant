@@ -31,7 +31,7 @@ public static class CompatSelfTest
         Check("仅相关BC7块重编码其他压缩块原样保留",textures.All(t=>t!["ChangedBlocks"]!.GetValue<int>()>0&&t["OriginalBlocks"]!.GetValue<int>()>0));
         Check("实际游戏文件未被改写",before.All(x=>ProjectStore.Hash(x.Key)==x.Value));
         var manifest=JsonNode.Parse(File.ReadAllText(Path.Combine(folder,"替换清单.json")))!;
-        Check("识别旧版已安装包并保留原始备份",manifest["CompatibleOriginalFormat"]!.GetValue<bool>()&&manifest["Files"]!.AsArray().All(f=>ProjectStore.Hash(Path.Combine(folder,f!["Backup"]!.GetValue<string>()))==f["OriginalSha256"]!.GetValue<string>()));
+        Check("旧版已安装包可以导出替换文件",manifest["CompatibleOriginalFormat"]!.GetValue<bool>()&&!Directory.Exists(Path.Combine(folder,"原文件备份"))&&manifest["Files"]!.AsArray().All(f=>ProjectStore.Hash(Path.Combine(folder,f!["Replacement"]!.GetValue<string>()))==f["ReplacementSha256"]!.GetValue<string>()));
         var model=Path.Combine(folder,"游戏图集核对");
         var body=p.Parts.Single(x=>x.Name=="Body");using var bodyPage=Image.Load<Rgba32>(Path.Combine(model,body.Page));using var bodyImage=Atlas.Extract(bodyPage,body);using var footprint=Atlas.MeshMask(body);
         var total=0;var clear=0;for(var y=8;y<body.Height-8;y++)for(var x=8;x<body.Width-8;x++){if(footprint[x,y].PackedValue==0)continue;total++;if(bodyImage[x,y].A<=3)clear++;}

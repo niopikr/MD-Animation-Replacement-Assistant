@@ -44,7 +44,7 @@ public static class PortableSelfTest
         foreach(var item in p.Parts)store.Confirm(p,item,null,empty:item.Number==p.Parts[0].Number);
         var exported=JsonSerializer.SerializeToNode(new VariantExportCoordinator(store,new Exporter(store)).Export(p))!;
         var exportedFolder=exported["Folder"]!.GetValue<string>();
-        Check("按需素材可导出同名游戏文件及备份",File.Exists(Path.Combine(exportedFolder,"替换文件完成标记.txt"))&&Directory.GetFiles(Path.Combine(exportedFolder,"原文件备份"),"*",SearchOption.AllDirectories).Length>0);
+        Check("按需素材可导出同名游戏替换文件",File.Exists(Path.Combine(exportedFolder,"替换文件完成标记.txt"))&&Directory.GetFiles(Path.Combine(exportedFolder,"替换文件"),"*",SearchOption.AllDirectories).Length>0&&!Directory.Exists(Path.Combine(exportedFolder,"原文件备份")));
         Check("独立版导出不再生成外部预览启动器",!Directory.GetFiles(exportedFolder,"*EX Studio*",SearchOption.AllDirectories).Any());
         Check("导出总文件夹按卡片ID和游戏名命名",Path.GetFileName(exportedFolder)==$"{p.CardId}-{p.ChineseName}");
         Check("替换文件只含0000一级目录",Directory.GetDirectories(Path.Combine(exportedFolder,"替换文件")).Select(Path.GetFileName).SequenceEqual(new[]{"0000"}));
