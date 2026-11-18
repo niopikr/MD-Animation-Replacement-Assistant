@@ -86,8 +86,8 @@ app.MapGet("/rigby/{**relative}", (string relative) =>
     return Path.GetExtension(file) == ".js" ? Results.File(file, "text/javascript; charset=utf-8") : Results.BadRequest();
 });
 app.MapGet("/style.css", () => Results.File(Path.Combine(web, "style.css"), "text/css; charset=utf-8"));
-app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.8" }));
-app.MapGet("/api/bootstrap", () => { lock (store.Gate) return Results.Ok(new { Cards = store.Choices(), Projects = store.Recent(), SamAvailable = sam.ModelDirectory.Length > 0,Installation=settings.Info() }); });
+app.MapGet("/api/ping", () => Results.Ok(new { Version = "1.5.9" }));
+app.MapGet("/api/bootstrap", () => { lock (store.Gate) return Results.Ok(new { Cards = store.Choices(), Projects = store.Recent().ToArray(), SamAvailable = sam.ModelDirectory.Length > 0,Installation=settings.Info() }); });
 app.MapGet("/api/settings",()=>Results.Ok(settings.Info()));
 app.MapPost("/api/settings",(GameSettings value)=>{if(updater.Running)throw new InvalidOperationException("更新中不能切换游戏目录");settings.Save(value);return Results.Ok(settings.Info());});
 app.MapPost("/api/settings/browse", async (FolderPickerRequest? request) => Results.Ok(new
@@ -100,14 +100,14 @@ app.MapPost("/api/library/cancel",()=>{updater.Cancel();return Results.Ok();});
 app.MapGet("/api/effects/catalog", () => Results.Ok(EffectCatalog.Read(workspace)));
 app.MapPost("/api/effects/extract", async (EffectExportRequest request, HttpContext context) =>
 {
-    if (updater.Running) throw new InvalidOperationException("目录正在刷新，请等刷新完成再提取。");
+    if (updater.Running) throw new InvalidOperationException("素材目录正在更新，请等更新完成再导出 Rigby2D 素材。");
     var (content, fileName) = await EffectExport.Create(workspace, settings.Read(), request.CardId, context.RequestAborted);
     context.Response.Headers["X-Workflow-Filename"] = Uri.EscapeDataString(fileName);
     return Results.File(content, "application/zip");
 });
 app.MapPost("/api/effects/browse", async (FolderPickerRequest? request) => Results.Ok(new
 {
-    Path = await NativeDialogs.PickFolder("选择含有效果贴图映射.json的素材目录", request?.InitialPath)
+    Path = await NativeDialogs.PickFolder("选择编辑后的素材文件夹", request?.InitialPath)
 }));
 app.MapPost("/api/effects/projects", async (EffectProjectRequest request, HttpContext context) =>
 {
@@ -135,7 +135,7 @@ app.MapPost("/api/rigby/export", (NewProjectRequest request, HttpContext context
 });
 app.MapPost("/api/rigby/browse", async (FolderPickerRequest? request) => Results.Ok(new
 {
-    Path = await NativeDialogs.PickFolder("选择已编辑的召唤素材文件夹", request?.InitialPath)
+    Path = await NativeDialogs.PickFolder("选择编辑后的素材文件夹", request?.InitialPath)
 }));
 app.MapPost("/api/rigby/conversion-source", (SummonPackRequest request) =>
 {
@@ -155,6 +155,22 @@ app.MapPost("/api/rigby/pack", (SummonPackRequest request, HttpContext context) 
     }
 });
 app.MapGet("/api/projects/{id}", (string id) => { lock (store.Gate) return Results.Ok(store.Load(id)); });
+app.MapPost("/api/projects/{id}/rename", (string id, RenameProjectRequest request) =>
+{
+    lock (store.Gate)
+    {
+        var project = store.Rename(id, request.Name);
+        return Results.Ok(new { project.DisplayName, project.UpdatedUtc });
+    }
+});
+app.MapPost("/api/projects/{id}/delete", (string id) =>
+{
+    lock (store.Gate)
+    {
+        store.Delete(id);
+        return Results.NoContent();
+    }
+});
 app.MapGet("/files/{id}/{**relative}", (string id, string relative) =>
 {
     var file = ProjectStore.Under(store.DirectoryFor(id), relative);
@@ -277,7 +293,7 @@ await app.StartAsync();
 var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single() + "/";
 JsonFile.Write(activeFile, new Dictionary<string, string> { ["Url"] = address, ["Token"] = token, ["Pid"] = Environment.ProcessId.ToString() });
 File.WriteAllText(Path.Combine(AppEnvironment.Runtime(workspace),"打开工作台.url"),"[InternetShortcut]\r\nURL="+address+"#"+token+"\r\n");
-Console.WriteLine("MD动画替换助手 1.5.8\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
+Console.WriteLine("MD动画替换助手 1.5.9\n" + address + "#" + token + "\n仅监听本机。关闭服务请使用页面右上角的关闭工具。");
 if (!args.Contains("--no-browser")) TryOpenBrowser(address + "#" + token);
 await app.WaitForShutdownAsync();
 

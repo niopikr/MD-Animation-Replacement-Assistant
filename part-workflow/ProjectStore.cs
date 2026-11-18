@@ -54,14 +54,78 @@ public sealed class ProjectStore(string workspace, string? projectRoot = null)
         state.UpdatedUtc = DateTime.UtcNow;
         JsonFile.Write(Path.Combine(DirectoryFor(state.Id), "project.json"), state);
     }
+    public ProjectState Rename(string id, string? name)
+    {
+        name = name?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 80 || name.Any(char.IsControl))
+            throw new InvalidDataException("请输入 1 到 80 个字符的项目名称。");
+
+        var project = ReadManagedProject(ManagedProjectFolder(id), id);
+        var displayName = name == project.ChineseName ? null : name;
+        if (project.DisplayName == displayName) return project;
+        project.DisplayName = displayName;
+        Save(project);
+        return project;
+    }
+
+    public void Delete(string id)
+    {
+        var folder = ManagedProjectFolder(id);
+        if (!Directory.Exists(folder)) return;
+
+        ReadManagedProject(folder, id);
+        var manifest = Path.Combine(folder, "project.json");
+        try
+        {
+            // Keep the project in the list if an open file interrupts deletion.
+            foreach (var entry in Directory.EnumerateFileSystemEntries(folder))
+            {
+                if (entry.Equals(manifest, StringComparison.OrdinalIgnoreCase)) continue;
+                var attributes = File.GetAttributes(entry);
+                if (attributes.HasFlag(FileAttributes.Directory))
+                    Directory.Delete(entry, recursive: !attributes.HasFlag(FileAttributes.ReparsePoint));
+                else
+                    File.Delete(entry);
+            }
+            Directory.Delete(folder, recursive: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException("项目未完全删除。请关闭正在使用该项目文件的程序，检查文件权限后重试。", e);
+        }
+    }
+
+    private string ManagedProjectFolder(string id) => Under(Root, Path.GetFullPath(DirectoryFor(id)));
+
+    private static ProjectState ReadManagedProject(string folder, string id)
+    {
+        var manifest = Path.Combine(folder, "project.json");
+        if (!Directory.Exists(folder) || IsLink(Path.GetDirectoryName(folder)!) ||
+            IsLink(folder) || !File.Exists(manifest) || IsLink(manifest))
+            throw new InvalidDataException("此目录无法确认为该项目的工作文件夹。");
+        var project = JsonFile.Read<ProjectState>(manifest);
+        if (project?.Id != id) throw new InvalidDataException("此目录无法确认为该项目的工作文件夹。");
+        return project;
+    }
+
+    private static bool IsLink(string path) => File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+
     public IEnumerable<object> Recent()
     {
         if (!Directory.Exists(Root)) return [];
-        return Directory.EnumerateFiles(Root, "project.json", SearchOption.AllDirectories)
-            .Where(p => Path.GetDirectoryName(Path.GetDirectoryName(p)) == Root)
-            .Select(p => { try { return JsonFile.Read<ProjectState>(p); } catch { return null; } })
+        return Directory.EnumerateDirectories(Root).Select(folder =>
+            {
+                try
+                {
+                    var manifest = Path.Combine(folder, "project.json");
+                    if (IsLink(folder) || !File.Exists(manifest) || IsLink(manifest)) return null;
+                    var p = JsonFile.Read<ProjectState>(manifest);
+                    return p.Id == Path.GetFileName(folder) ? p : null;
+                }
+                catch { return null; }
+            })
             .Where(p => p is not null).OrderByDescending(p => p!.UpdatedUtc)
-        .Select(p => new { p!.Id, p.CardId, p.ChineseName, p.IsEffect, p.UpdatedUtc, Completed = p.Parts.Count(x => x.Status != "pending"), Total = p.Parts.Count });
+        .Select(p => new { p!.Id, p.CardId, p.ChineseName, p.DisplayName, p.IsEffect, p.UpdatedUtc, Completed = p.Parts.Count(x => x.Status != "pending"), Total = p.Parts.Count });
     }
     internal (CardChoice Card, string Variant, string Version, string ConfigPath, string Source, string SkeletonFile, string AtlasFile) OpenModel(NewProjectRequest request)
     {

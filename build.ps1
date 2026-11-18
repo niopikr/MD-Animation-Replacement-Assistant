@@ -57,7 +57,7 @@ if (Test-Path -LiteralPath (Join-Path $taskRoot '数据/效果目录.json')) {
     Copy-Item -LiteralPath (Join-Path $taskRoot '数据/效果目录.json') -Destination (Join-Path $taskTarget '数据')
 }
 Copy-Item -LiteralPath (Join-Path $taskRoot '使用说明.md') -Destination $taskTarget
-'{"Format":"md-animation-helper-portable-v1","Version":"1.5.8","SeedCards":523}' | Set-Content -LiteralPath (Join-Path $taskTarget 'portable.json') -Encoding UTF8
+'{"Format":"md-animation-helper-portable-v1","Version":"1.5.9","SeedCards":523}' | Set-Content -LiteralPath (Join-Path $taskTarget 'portable.json') -Encoding UTF8
 foreach ($name in 'frames','ThirdParty','CardAssetExtractor.runtimeconfig.json','onnxruntime_providers_shared.lib','onnxruntime.lib','web.config') {
     $taskExtra = [IO.Path]::GetFullPath((Join-Path $taskTarget $name))
     if (!$taskExtra.StartsWith($taskTarget + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw '清理路径越界' }

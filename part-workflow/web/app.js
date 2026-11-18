@@ -74,6 +74,7 @@ function setControls(){
   $('restoreButton').disabled=busy||!part?.revisions.length;
   $('exportButton').disabled=busy||!project||project.parts.some(p=>p.status==='pending');
   for(const input of document.querySelectorAll('.placement input'))input.disabled=busy||!cutout;
+  for(const button of $('recentProjects').querySelectorAll('button'))button.disabled=busy;
 }
 function populateCards(){
   const filter=$('cardSearch').value.trim().toLowerCase();
@@ -90,12 +91,94 @@ function populateVariants(){
   $('variantSelect').value=c.variants.find(v=>v.includes('高清'))||c.variants[0];
   setControls();
 }
-async function home(){await flushDrafts();bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);await loadEffectCatalog();if(!libraryTimer)pollLibrary();$('recentProjects').replaceChildren();
-  for(const p of bootstrap.projects){const button=document.createElement('button');const title=document.createElement('span');title.textContent=`${p.chineseName}〔${p.cardId}〕`;const info=document.createElement('small');info.textContent=`${p.completed}/${p.total} 已确认 · ${new Date(p.updatedUtc).toLocaleString()} · ${p.id}`;button.append(title,info);button.onclick=()=>action(()=>openProject(p.id));$('recentProjects').append(button);}
-  if(!bootstrap.projects.length)$('recentProjects').textContent='尚无项目。新建后会自动保存在本机。';
+function projectTitle(p) {
+  return `${p.displayName || p.chineseName}〔${p.cardId}〕`;
+}
+function renderRecentProjects() {
+  const list = $('recentProjects');
+  list.replaceChildren();
+  for (const p of bootstrap.projects) {
+    const row = document.createElement('div');
+    row.className = 'recentProject';
+    const open = document.createElement('button');
+    const title = document.createElement('span');
+    title.textContent = projectTitle(p);
+    const info = document.createElement('small');
+    info.textContent = `${p.completed}/${p.total} 已确认 · ${new Date(p.updatedUtc).toLocaleString()} · ${p.id}`;
+    open.append(title, info);
+    open.onclick = () => action(() => openProject(p.id));
+    const rename = document.createElement('button');
+    rename.textContent = '重命名';
+    rename.setAttribute('aria-label', `重命名项目 ${title.textContent}（${p.id}）`);
+    rename.onclick = () => promptProjectRename(p);
+    const remove = document.createElement('button');
+    remove.className = 'danger';
+    remove.textContent = '删除';
+    remove.setAttribute('aria-label', `删除项目 ${title.textContent}（${p.id}）`);
+    remove.onclick = () => confirmProjectDeletion(p, title.textContent);
+    row.append(open, rename, remove);
+    list.append(row);
+  }
+  if (!bootstrap.projects.length) list.textContent = '尚无项目。新建后会自动保存在本机。';
+  setControls();
+}
+function promptProjectRename(p) {
+  if (busy) return;
+  const dialog = $('renameProjectDialog');
+  const input = $('projectDisplayName');
+  $('renameProjectTarget').textContent = `${p.chineseName}〔${p.cardId}〕 · ${p.id}`;
+  input.value = p.displayName || p.chineseName;
+  input.setCustomValidity('');
+  input.oninput = () => input.setCustomValidity('');
+  $('cancelRenameProject').onclick = () => dialog.close();
+  $('renameProjectForm').onsubmit = event => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) {
+      input.setCustomValidity('请输入项目名称。');
+      input.reportValidity();
+      return;
+    }
+    dialog.close();
+    action(async () => {
+      const result = await api(`/api/projects/${encodeURIComponent(p.id)}/rename`, {name});
+      Object.assign(p, result);
+      if (project?.id === p.id) {
+        project.displayName = p.displayName;
+        $('projectName').textContent = projectTitle(p);
+      }
+      bootstrap.projects.sort((a, b) => new Date(b.updatedUtc) - new Date(a.updatedUtc));
+      renderRecentProjects();
+      message(`项目名称已保存为「${p.displayName || p.chineseName}」。`);
+    });
+  };
+  dialog.showModal();
+  input.select();
+}
+function confirmProjectDeletion(p, title) {
+  if (busy) return;
+  const dialog = $('deleteProjectDialog');
+  $('deleteProjectTarget').textContent = `${title} · ${p.id}`;
+  $('confirmDeleteProject').onclick = () => {
+    dialog.close();
+    action(async () => {
+      message(`正在删除项目「${title}」…`);
+      await api(`/api/projects/${encodeURIComponent(p.id)}/delete`, {});
+      bootstrap.projects = bootstrap.projects.filter(item => item.id !== p.id);
+      if (project?.id === p.id) {
+        project = part = artwork = source = reference = mesh = cutout = latestExport = null;
+        saveText('项目已删除');
+      }
+      renderRecentProjects();
+      message(`已删除项目「${title}」及其工作文件。`);
+    });
+  };
+  dialog.showModal();
+}
+async function home(){await flushDrafts();bootstrap=await api('/api/bootstrap');populateCards();showInstallation(bootstrap.installation);await loadEffectCatalog();if(!libraryTimer)pollLibrary();renderRecentProjects();
   $('home').hidden=false;$('editor').hidden=true;message(bootstrap.samAvailable?'已找到本地素材库和 SAM 2.1。可新建项目，或继续已有进度。':'已找到本地素材库。当前未找到 SAM 2.1 模型，可直接用部件图或严格涂抹。');
 }
-async function openProject(id){await flushDrafts();project=await api(`/api/projects/${id}`);$('home').hidden=true;$('editor').hidden=false;$('projectName').textContent=`${project.chineseName}〔${project.cardId}〕`;
+async function openProject(id){await flushDrafts();project=await api(`/api/projects/${id}`);$('home').hidden=true;$('editor').hidden=false;$('projectName').textContent=projectTitle(project);
   artwork=project.artwork?await image(fileUrl(project.artwork,false)):null;
   source=null;
   await selectPart(project.currentPart,false);requestAnimationFrame(fitSource);saveText('项目已读取 · 自动保存');
@@ -105,7 +188,7 @@ function renderList(){
   $('partList').replaceChildren();
   for(const [index,p] of project.parts.entries()){
     const button=document.createElement('button');button.className=p.number===part.number?'selected':'';button.dataset.number=p.number;
-    const status=document.createElement('span');status.className='status';status.textContent=p.status==='replaced'?'✓':p.status==='original'?'○':p.status==='empty'?'∅':'·';status.title=p.status==='replaced'?'已替换':p.status==='original'?'已保留原图':p.status==='empty'?'已确认为空素材':'未确认';
+    const status=document.createElement('span');status.className='status';status.textContent=p.status==='replaced'?'✓':p.status==='original'?'○':p.status==='empty'?'∅':'·';status.title=p.status==='replaced'?'已替换':p.status==='original'?'已保留原部件':p.status==='empty'?'已替换为空素材':'未确认';
     const thumb=document.createElement('img');thumb.src=fileUrl(`templates/${p.key}/reference.png`,false);thumb.alt='';
     const text=document.createElement('span');text.textContent=`${p.number}. ${p.label}`;const small=document.createElement('small');small.textContent=p.name;text.append(small);button.append(status,thumb,text);button.onclick=()=>action(()=>selectPart(index));$('partList').append(button);
   }
@@ -136,7 +219,7 @@ async function selectPart(index,persist=true){
   if(source!==previousSource)fitSource();
   if(persist)await api(`/api/projects/${project.id}/step`,{number:index});
   if(window.updatePartReferences)window.updatePartReferences(project.id,token,part);
-  saveText('进度已保存');setControls();message(part.status==='pending'?'导入部件图片可直接对齐；需要分割时，圈选要保留的像素。':`当前部件${part.status==='replaced'?'已替换':part.status==='empty'?'已替换为空素材':'已保留原图'}。再次确认会保存新的历史版本。`);
+  saveText('进度已保存');setControls();message(part.status==='pending'?'导入部件图片可直接对齐。需要分割时，圈选要保留的像素。':`当前部件${part.status==='replaced'?'已替换':part.status==='empty'?'已替换为空素材':'已保留原部件'}。再次确认会保存新的历史版本。`);
 }
 function fitSource(){if(!source)return;const box=$('sourceHost').getBoundingClientRect();view.scale=Math.min((box.width-20)/source.width,(box.height-20)/source.height);view.x=(box.width-source.width*view.scale)/2;view.y=(box.height-source.height*view.scale)/2;renderSource();}
 function renderSource(){
@@ -191,7 +274,7 @@ function renderRawAlignment(){aligned.width=part.width;aligned.height=part.heigh
 function renderAligned(){if(!part)return;$('cutoutPreview').hidden=!cutout;if(cutout)$('cutoutImage').src=cutout.src;else $('cutoutImage').removeAttribute('src');const target=$('alignmentCanvas');target.width=part.width;target.height=part.height;const a=target.getContext('2d');a.clearRect(0,0,target.width,target.height);
   if(reference&&$('ghostToggle').checked){a.globalAlpha=cutout?0.25:1;a.drawImage(reference,0,0);a.globalAlpha=1;}
   if(cutout){renderRawAlignment();masked.width=part.width;masked.height=part.height;const m=masked.getContext('2d');m.drawImage(aligned,0,0);if($('clipToggle').checked){m.globalCompositeOperation='destination-in';m.drawImage(mesh,0,0);}a.drawImage(masked,0,0);}
-  $('alignmentState').textContent=cutout?(part.draftSource&&!part.draftMask?'整张部件图 · 可拖动或缩放':'已按选区裁片 · 可拖动或缩放'):part.status==='empty'?'此部件已确认为全透明':'等待部件图片或选区';
+  $('alignmentState').textContent=cutout?(part.draftSource&&!part.draftMask?'整张部件图 · 可拖动或缩放':'已按选区裁片 · 可拖动或缩放'):part.status==='empty'?'此部件已替换为空素材':'等待部件图片或选区';
 }
 let alignDrag;
 $('alignmentCanvas').addEventListener('pointerdown',e=>{if(busy||!cutout)return;const r=e.currentTarget.getBoundingClientRect();alignDrag={x:e.clientX,y:e.clientY,px:part.placement.x,py:part.placement.y,sx:part.width/r.width,sy:part.height/r.height};e.currentTarget.setPointerCapture(e.pointerId);});
@@ -214,14 +297,17 @@ async function exportPackage(final){
  $('exportDialog').showModal();message(`已保存：${latestExport.folder}`);
 }
 $('cardSearch').oninput=populateCards;$('cardSelect').onchange=populateVariants;
-$('createButton').onclick=()=>action(async()=>{if(!$('cardSelect').value)throw Error('请先选择卡片');message('正在读取骨骼并准备原部件参考…');const p=await api('/api/projects',{cardId:+$('cardSelect').value,variant:$('variantSelect').value});await openProject(p.id);});
-$('rigbyExportButton').onclick=()=>action(async()=>{
-  message('正在提取动画并打包 Rigby2D 文件…');
-  const archive=await api('/api/rigby/export',{cardId:+$('cardSelect').value,variant:$('variantSelect').value});
-  if(!archive?.blob)throw Error('未收到 Rigby2D ZIP，请重试。');
+$('createButton').onclick=()=>action(async()=>{if(!$('cardSelect').value)throw Error('请先选择卡片。');message('正在读取动画部件并创建项目…');const p=await api('/api/projects',{cardId:+$('cardSelect').value,variant:$('variantSelect').value});await openProject(p.id);});
+$('rigbyExportButton').onclick=()=>action(()=>exportRigbyAssets('/api/rigby/export',{
+  cardId:+$('cardSelect').value,variant:$('variantSelect').value
+}));
+async function exportRigbyAssets(path,request){
+  message('正在导出 Rigby2D 素材…');
+  const archive=await api(path,request);
+  if(!archive?.blob)throw Error('未收到 Rigby2D 素材 ZIP，请重试。');
   downloadZip(archive);
-  message('Rigby2D ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开 JSON。');
-});
+  message('Rigby2D 素材 ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开 JSON。');
+}
 function downloadZip({blob,filename}){
   const url=URL.createObjectURL(blob);
   const link=document.createElement('a');
@@ -242,7 +328,7 @@ function populateEffects(){
   $('effectModelPicker').hidden=true;
   const filter=$('effectSearch').value.trim().normalize('NFKC').toLowerCase();
   const matches=effectCards.filter(card=>`${card.name} ${card.cardId}`.normalize('NFKC').toLowerCase().includes(filter));
-  select.replaceChildren(new Option(matches.length?'选择效果卡片':'没有匹配的效果卡片',''),
+  select.replaceChildren(new Option(matches.length?'选择卡片':'没有匹配的卡片',''),
     ...matches.map(card=>new Option(`${card.name}〔${card.cardId}〕`,card.cardId)));
   if(matches.some(card=>String(card.cardId)===current))select.value=current;
   else if(matches.length===1)select.value=matches[0].cardId;
@@ -252,8 +338,8 @@ $('effectSearch').oninput=populateEffects;
 $('effectSelect').onchange=()=>{$('effectModelPicker').hidden=true;setControls();};
 async function createEffectProject(model){
   const cardId=Number($('effectSelect').value);
-  if(!cardId)throw Error('请先选择效果卡片。');
-  message('正在从本机游戏读取效果动画和部件…');
+  if(!cardId)throw Error('请先选择卡片。');
+  message('正在读取动画部件并创建项目…');
   const result=await api('/api/effects/projects',{cardId,model});
   if(result.project){
     $('effectModelPicker').hidden=true;
@@ -269,12 +355,8 @@ $('effectCreateButton').onclick=()=>action(()=>createEffectProject());
 $('effectModelConfirm').onclick=()=>action(()=>createEffectProject($('effectModelSelect').value));
 $('effectExtractButton').onclick=()=>action(async()=>{
   const cardId=Number($('effectSelect').value);
-  if(!cardId)throw Error('请先选择效果卡片。');
-  message('正在从本机游戏提取效果动画并生成 Rigby2D 素材…');
-  const archive=await api('/api/effects/extract',{cardId});
-  if(!archive?.blob)throw Error('未收到效果素材 ZIP，请重试。');
-  downloadZip(archive);
-  message('效果素材 ZIP 已交给浏览器下载。解压后，在 Rigby2D 中打开效果 JSON。');
+  if(!cardId)throw Error('请先选择卡片。');
+  await exportRigbyAssets('/api/effects/extract',{cardId});
 });
 async function convertForPack(route, request, show){
   show('正在读取本机的 Rigby2D 导出文件…');
@@ -296,7 +378,7 @@ async function convertForPack(route, request, show){
     summary:`已校验 ${result.checkpoints} 个采样时刻，最大顶点误差 ${result.maxVertexError.toFixed(3)} 模型单位。`
   }));
 }
-function bindTexturePack(prefix, route, folderHint, selection){
+function bindTexturePack(prefix, route, selection){
   const field=$(prefix+'Folder'), button=$(prefix+'PackButton');
   const link=$(prefix+'PackDownload'), status=$(prefix+'PackStatus');
   const convert=$(prefix+'Convert');
@@ -325,7 +407,7 @@ function bindTexturePack(prefix, route, folderHint, selection){
     clear();
     const folder=field.value.trim();
     if(!folder){
-      show(folderHint,true);
+      show('请先选择已解压的素材文件夹。',true);
       field.focus();
       return;
     }
@@ -360,9 +442,9 @@ function bindTexturePack(prefix, route, folderHint, selection){
     });
   };
 }
-bindTexturePack('summon','/api/rigby','请先选择已解压的召唤素材文件夹。',
+bindTexturePack('summon','/api/rigby',
   ()=>({cardId:Number($('cardSelect').value),variant:$('variantSelect').value}));
-bindTexturePack('effect','/api/effects','请先选择含「效果贴图映射.json」的素材文件夹。',
+bindTexturePack('effect','/api/effects',
   ()=>({cardId:Number($('effectSelect').value)||null}));
 $('partImageButton').onclick=()=>$('partImageInput').click();
 $('partImageInput').onchange=()=>action(async()=>{
@@ -456,6 +538,6 @@ $('partReferenceZoom').oninput=()=>{const n=+$('partReferenceZoom').value;if(n>=
 const partRefHost=$('partReferenceHost');partRefHost.onwheel=e=>{e.preventDefault();partReferenceView.scale=Math.max(.25,Math.min(4,partReferenceView.scale*(e.deltaY<0?1.1:1/1.1)));renderPartReference();};
 partRefHost.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();partRefHost.setPointerCapture(e.pointerId);partReferenceDrag={x:e.clientX,y:e.clientY,px:partReferenceView.x,py:partReferenceView.y};};partRefHost.onpointermove=e=>{if(!partReferenceDrag)return;partReferenceView.x=partReferenceDrag.px+e.clientX-partReferenceDrag.x;partReferenceView.y=partReferenceDrag.py+e.clientY-partReferenceDrag.y;renderPartReference();};partRefHost.onpointerup=partRefHost.onpointercancel=()=>partReferenceDrag=null;
 
-$('keepPendingButton').onclick=()=>action(async()=>{const current=project.currentPart;await flushDrafts();project=await api(`/api/projects/${project.id}/keep-pending`,{});await selectPart(current);message('其余部件已保留原图。需要回包时，点击「导出替换文件」。');});
+$('keepPendingButton').onclick=()=>action(async()=>{const current=project.currentPart;await flushDrafts();project=await api(`/api/projects/${project.id}/keep-pending`,{});await selectPart(current);message('其余部件已保留原部件。准备好后，点击「导出替换文件」。');});
 for(const id of ['tailLayerVisible','tailLayerOpacity'])$(id).oninput=renderSource;
 window.addEventListener('tail-layer-updated',renderSource);

@@ -949,7 +949,7 @@ def extract_card(entry, bundles, folder, archive_path=None):
               "角色项目保留可读取的二维网格与权重。动作仅转换可映射的骨骼变换与显隐。Unity 粒子、3D、材质和音效由游戏原资源继续播放。",
               "回包可直接编辑此文件夹内的原有 PNG，保留文件名、大小、透明度和原图集坐标。保留「效果贴图映射.json」。",
               "也可在 Rigby2D 中导出「JSON + Atlas」，放到「Rigby2D导出」子文件夹。保持 atlas 与原模型同名，并保留图片资源名及部件原画布尺寸。",
-              "在助手首页选择解压后的此文件夹，点击「打包效果替换文件」。原生 Spine 可勾选「按 Rigby2D 效果转换」写回动作。Unity 效果使用游戏原时间轴。",
+              "在助手首页的「卡片效果动画」中选择此文件夹，点击「打包替换文件」。原生 Spine 可勾选「按 Rigby2D 效果转换」写回动作。Unity 效果使用游戏原时间轴。",
               "", *[f"- {v['Model']} · 原生 Spine" if v.get("NativeSpine") else
                     f"- {v['Model']} · {v['Sprites']} 个 Sprite · {v['WeightedMeshes']} 个带权重网格 · {v['Frames']} 个动作采样间隔" for v in versions]]
     if errors:

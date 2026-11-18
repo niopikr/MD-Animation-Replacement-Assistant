@@ -33,7 +33,7 @@ internal static class SummonPackage
     private static SummonSourceMap? ReadMap(string folder, int cardId)
     {
         if (File.Exists(Path.Combine(folder, EffectPackage.MapName)))
-            throw new InvalidDataException("这是卡片效果素材，请使用「打包效果替换文件」。");
+            throw new InvalidDataException("请在「卡片效果动画」中选择此素材文件夹，再点击「打包替换文件」。");
         var mapPath = Path.Combine(folder, MapName);
         var map = File.Exists(mapPath) ? JsonFile.Read<SummonSourceMap>(mapPath) : null;
         if (map is not null && (map.Format != MapFormat || map.CardId != cardId))

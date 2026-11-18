@@ -1,8 +1,8 @@
 # MD动画替换助手
 
-Windows 本地工具，用于编辑和回包 Yu-Gi-Oh! Master Duel 的召唤切入与卡片效果素材。当前源码版本 1.5.8。
+Windows 本地工具，用于编辑和回包 Yu-Gi-Oh! Master Duel 的召唤切入与卡片效果素材。当前源码版本 1.5.9。
 
-完整运行包（含 SAM、本地预览库与运行依赖）见 [v1.5.8 发行版](https://github.com/niopikr/MD-Animation-Replacement-Assistant/releases/tag/v1.5.8)。下载并解压 Windows x64 ZIP，双击 `MD动画替换助手.exe`。[更新记录](update.md) 汇总了自 v1.4.0 以来的变化。
+完整运行包（含 SAM、本地预览库与运行依赖）见 [v1.5.9 发行版](https://github.com/niopikr/MD-Animation-Replacement-Assistant/releases/tag/v1.5.9)。下载并解压 Windows x64 ZIP，双击 `MD动画替换助手.exe`。[更新记录](update.md) 汇总了自 v1.4.0 以来的变化。
 
 - 搜索中文卡名，按需从用户选择的游戏目录提取动画素材。
 - 首页可下载所选原动画的 Rigby2D ZIP，包含 JSON、图集和全部 PNG。
@@ -13,7 +13,7 @@ Windows 本地工具，用于编辑和回包 Yu-Gi-Oh! Master Duel 的召唤切�
 - 本地 Rigby2D 动画预览和尾帧参考图层，支持缩放、平移、不透明度调节。
 - 手动导出 `替换/0000`；高清和对应低清资源同步。
 - 显式更新游戏动画卡目录，跳过未变化资源。
-- 在首页按卡名提取卡片效果素材，使用 Rigby2D 打开，再将修改后的效果贴图打包为游戏替换文件。更新时同步扫描效果目录。
+- 召唤和效果动画均可从首页「导出 Rigby2D 素材」，编辑后使用对应栏的「打包替换文件」。更新时同步扫描效果目录。
 
 效果素材提取脚本位于 `tools/extract_effects.py`。更新助手目录后，使用本机 Python 3.11、UnityPy 和 Pillow，读取最新的 `数据/索引/index.json`：
 
@@ -36,13 +36,13 @@ Spine 格式预览使用随源码附带的 Rigby2D（MIT），通过 localhost �
 需要 Windows x64、.NET 8 SDK 和 PowerShell。首次构建还需 Python 3.11 或更高版本及 pip，用于准备随发行包提供的效果提取环境。可用 `-EffectRuntime` 指定已通过 `tools/prepare-effect-runtime.ps1` 准备好的目录。发行包可离线运行，用户无需安装 Python。
 
 ```powershell
-pwsh -File ./build.ps1 -Output ./artifacts/MD动画替换助手-v1.5.8
+pwsh -File ./build.ps1 -Output ./artifacts/MD动画替换助手-v1.5.9
 ```
 
 如需 SAM，将匹配的 `sam2.1_hiera_tiny.encoder.onnx` 和 `sam2.1_hiera_tiny.decoder.onnx` 放在一个本地目录，然后构建：
 
 ```powershell
-pwsh -File ./build.ps1 -Output ./artifacts/MD动画替换助手-v1.5.8-sam -SamModels "D:/Models/sam2.1"
+pwsh -File ./build.ps1 -Output ./artifacts/MD动画替换助手-v1.5.9-sam -SamModels "D:/Models/sam2.1"
 ```
 
 模型来源：https://huggingface.co/cstr/sam2.1-hiera-tiny-ONNX ，Apache-2.0。缺少模型时可使用手动选区，SAM 不会自动下载。构建脚本拒绝覆盖已有目录；输出包含本地 .NET/ASP.NET 与 ONNX 运行时，不需要用户安装 .NET。分发前在目标 Windows 环境测试，保留输出的整个文件夹。微软 C++ 组件复制自构建机器的 System32；机器缺少对应文件时构建会明确报错。

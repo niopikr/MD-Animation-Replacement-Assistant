@@ -35,6 +35,8 @@ public sealed class ProjectState
     public string Id { get; set; } = "";
     public int CardId { get; set; }
     public string ChineseName { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DisplayName { get; set; }
     public string Variant { get; set; } = "";
     public string SpineVersion { get; set; } = "";
     public string SourceVersion { get; set; } = "";
@@ -105,6 +107,7 @@ public sealed class Revision
 
 public sealed record CardChoice(int Id, string Name, string VersionFolder, string[] Variants);
 public sealed record NewProjectRequest(int CardId, string Variant);
+public sealed record RenameProjectRequest(string? Name);
 public sealed record SelectionRequest(string Mask);
 public sealed record ConfirmRequest(string Image, Placement Placement);
 public sealed record SamRequest(string Mask, float[][] Points, bool LimitToHint = false, int? PartNumber = null);

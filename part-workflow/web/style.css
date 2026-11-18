@@ -20,3 +20,13 @@
 .shapeControls{border:1px solid #e3b64d;padding:10px;margin:10px 0;border-radius:6px}.shapeControls input{width:90px}.shapeControls p{font-size:12px}.referenceFrames canvas,#animationCanvas,#partReferenceHost{touch-action:none;cursor:grab}#partReferenceHost{overflow:hidden}#reference{user-select:none;pointer-events:none;transform-origin:center}#partReferenceZoom{width:85px}#referenceZoom{width:95px}
 
 .tailLayerControls{border:1px solid #536079;padding:10px;border-radius:8px;margin-bottom:12px}.tailLayerControls h3{margin:0}.tailLayerControls p{font-size:12px}.tailLayerControls input[type=number]{width:85px}#keepPendingButton{width:100%;white-space:normal;margin-top:10px}.projectHeading small{display:block;color:#a4aebd;font-size:11px;margin-top:6px}
+
+#recentProjects{display:grid;gap:8px;margin-top:12px}
+.recentProject{display:flex;align-items:center;gap:8px}
+.recentProject button{margin:0}
+.recentProject button:first-child{flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere}
+button.danger{color:#ffc3c7;border-color:#88545d;background:#3a2832}
+button.danger:hover{border-color:#ffc3c7}
+#renameProjectDialog,#deleteProjectDialog{max-width:460px}
+#renameProjectTarget,#deleteProjectTarget{color:var(--text);overflow-wrap:anywhere}
+#renameProjectDialog .row,#deleteProjectDialog .row{justify-content:flex-end}
